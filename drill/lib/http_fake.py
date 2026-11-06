@@ -38,11 +38,17 @@ class NoOpenSSL(RuntimeError):
     """The `openssl` CLI isn't on PATH, so drill can't mint the HTTP fake's CA."""
 
 
-def _openssl(*args: str, cwd: Path) -> None:
+def require_openssl() -> str:
+    """The openssl CLI's path, or NoOpenSSL with what to do about it."""
     exe = shutil.which("openssl")
     if exe is None:
         raise NoOpenSSL("drill's HTTP fake needs the openssl CLI to mint its CA, and there is no openssl on PATH; "
                         "install it (it ships with macOS and most Linux distributions)")
+    return exe
+
+
+def _openssl(*args: str, cwd: Path) -> None:
+    exe = require_openssl()
     proc = subprocess.run([exe, *args], cwd=cwd, capture_output=True, text=True)
     if proc.returncode:
         raise RuntimeError(f"openssl {args[0]} failed (exit {proc.returncode}): {proc.stderr.strip()}")
@@ -106,6 +112,65 @@ def mint_leaf(certs: Path, host: str) -> tuple[Path, Path]:
     return pem, key
 
 
+PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
+CA_VARS = ("SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS")
+
+
+def upstream_proxy(env=os.environ) -> str | None:
+    """The proxy drill itself was told to use, which unfaked hosts keep going through."""
+    return next((env[v] for v in ("HTTPS_PROXY", "https_proxy") if env.get(v)), None)
+
+
+def user_bundles(env=os.environ) -> list[Path]:
+    """The CA files the user already trusts: each one their env names, plus the system's default bundle."""
+    named = [Path(env[v]) for v in CA_VARS if env.get(v)]
+    defaults = ssl.get_default_verify_paths()
+    system = [Path(p) for p in (defaults.cafile, defaults.openssl_cafile, "/etc/ssl/cert.pem") if p]
+    system = [p for p in system if p.is_file()][:1]
+    seen, out = set(), []
+    for p in [*named, *system]:
+        if p.is_file() and p.resolve() not in seen:
+            seen.add(p.resolve())
+            out.append(p)
+    return out
+
+
+def trust_bundle(dest: Path, ca: Path, env=os.environ) -> Path:
+    """Write the user's bundle plus the drill CA to dest, the one file a run's clients trust."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    parts = [p.read_text(errors="replace").rstrip("\n") + "\n" for p in user_bundles(env)]
+    dest.write_text("".join(parts) + "# drill throwaway CA\n" + ca.read_text())
+    return dest
+
+
+def run_env(fake: "HttpFake", bundle: Path) -> dict:
+    """What `drill run` exports so the run's clients reach the fake and trust it (ADR-0013)."""
+    return {**{v: fake.url for v in PROXY_VARS}, **{v: str(bundle) for v in CA_VARS}}
+
+
+NODE_PASSTHROUGH = """#!{python} -I
+# Written by drill. Not a fixture shim: it records nothing and runs the real node. node's fetch
+# ignores HTTPS_PROXY unless NODE_USE_ENV_PROXY=1, which the sandbox doesn't pass through (ADR-0013).
+import os, sys
+os.environ["NODE_USE_ENV_PROXY"] = "1"
+os.execv({node!r}, [{node!r}, *sys.argv[1:]])
+"""
+
+
+def install_node_passthrough(bin_dir: Path, python: str, path: str | None = None) -> Path | None:
+    """A `node` in bin_dir that turns on node's env proxy and runs the real one; None when there's no node."""
+    search = os.pathsep.join(d for d in (path if path is not None else os.environ.get("PATH", "")).split(os.pathsep)
+                             if d and Path(d).resolve() != bin_dir.resolve())
+    node = shutil.which("node", path=search)
+    if node is None:
+        return None
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    passthrough = bin_dir / "node"
+    passthrough.write_text(NODE_PASSTHROUGH.format(python=python, node=os.path.realpath(node)))
+    passthrough.chmod(0o755)
+    return passthrough
+
+
 def register(url: str, workspace: Path) -> None:
     """Tell the fake at url that the next run lives in workspace (what drill's scaffold does)."""
     body = json.dumps({"workspace": str(workspace)}).encode()
@@ -148,6 +213,7 @@ class HttpFake:
         self.workspace: Path | None = None
         self.lock = threading.Lock()
         self._contexts: dict[str, ssl.SSLContext] = {}
+        self.tunnelled: set[str] = set()  # host:port of every CONNECT passed through unfaked
         self._server: ThreadingHTTPServer | None = None
 
     @property
@@ -289,6 +355,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def _tunnel(self, host: str, port: int):
+        self.fake.tunnelled.add(f"{host}:{port}")
         try:
             up = self._open_upstream(host, port)
         except OSError as e:

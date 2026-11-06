@@ -8,6 +8,7 @@ from pathlib import Path
 
 from drill.cases import load_cases
 from drill.drill import drill
+from drill.lib.http_fake import NoOpenSSL, require_openssl
 from drill.rig import Refusal, load_rig
 from drill.runners.plugin_eval import Model
 from drill.skill import BadPin, SkillCache, drill_revision, local_skill, revision
@@ -35,6 +36,11 @@ def cmd_run(args) -> int:
     if args.skill is None:
         rig.pin()  # refuse a bad pin before anything else
     cases = load_cases(rig.path / "cases")
+    if rig.hosts:
+        try:
+            require_openssl()
+        except NoOpenSSL as e:
+            raise Refusal(str(e)) from e
     if not args.model:
         raise Refusal("run needs at least one --model <id>")
     try:
