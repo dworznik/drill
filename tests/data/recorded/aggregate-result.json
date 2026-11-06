@@ -1,0 +1,176 @@
+{
+ "schemaVersion": 1,
+ "claudeVersion": "2.1.318",
+ "startedAt": "2026-11-06T12:09:22.390Z",
+ "durationSeconds": 33,
+ "costUsd": 0.01166406,
+ "partial": false,
+ "suite": {
+  "root": "/tmp/drill-skill-x/skill-hello",
+  "ablation": "with-without",
+  "modelOverride": "haiku",
+  "threshold": 1,
+  "concurrency": 1,
+  "plugins": [
+   {
+    "name": "skill-hello",
+    "path": "/tmp/drill-skill-x/skill-hello"
+   }
+  ]
+ },
+ "cases": [
+  {
+   "name": "greet-ana",
+   "dir": "evals/greet-ana",
+   "source": "mixed",
+   "promptMarkdown": "Greet Ana using the hello skill.",
+   "runsPerCase": 3,
+   "timeoutSeconds": 300,
+   "maxTurns": 8,
+   "graders": [
+    {
+     "name": "said-hi",
+     "type": "llm",
+     "weight": 1,
+     "graderMarkdown": "The response contains the greeting \"Hi Ana, from greet\", which is the greet tool's output.",
+     "config": {
+      "criteria": "The response contains the greeting \"Hi Ana, from greet\", which is the greet tool's output.",
+      "focus": "last_message"
+     }
+    }
+   ],
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 4,
+      "costUsd": 0.0029882500000000005,
+      "judgeCostUsd": 6.9e-05,
+      "durationSeconds": 10,
+      "startedAt": "2026-11-06T12:09:22.412Z",
+      "error": null,
+      "tracePath": "/KEPT/with-1/out/trace.jsonl",
+      "skippedPaidGraders": false,
+      "graders": [
+       {
+        "name": "said-hi",
+        "passed": true,
+        "weight": 1,
+        "explanation": "judge votes: PASS PASS PASS",
+        "withOnly": false,
+        "scored": true,
+        "judgeVotes": [
+         true,
+         true,
+         true
+        ],
+        "evidence": "Hi Ana, from greet\n\nThe shell printed two `.bashrc: Permission denied` warnings before the greeting. They come from the sandboxed shell setup, not from `greet`."
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 4,
+      "costUsd": 0.00300851,
+      "judgeCostUsd": 7.890000000000002e-05,
+      "durationSeconds": 8,
+      "startedAt": "2026-11-06T12:09:31.967Z",
+      "error": null,
+      "tracePath": "/KEPT/with-2/out/trace.jsonl",
+      "skippedPaidGraders": false,
+      "graders": [
+       {
+        "name": "said-hi",
+        "passed": true,
+        "weight": 1,
+        "explanation": "judge votes: PASS PASS PASS",
+        "withOnly": false,
+        "scored": true,
+        "judgeVotes": [
+         true,
+         true,
+         true
+        ],
+        "evidence": "Hi Ana, from greet\n\nThe shell also printed two `Permission denied` errors for `/root/.cache/drill/runs/drill-um3dno7w/tmp/claude-eval-fXL1WR/home/.bashrc`. They come from shell startup, not from `greet`."
+       }
+      ]
+     }
+    ],
+    "without": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.0029132,
+      "judgeCostUsd": 8.7e-05,
+      "durationSeconds": 8,
+      "startedAt": "2026-11-06T12:09:39.896Z",
+      "error": null,
+      "tracePath": "/KEPT/without-1/out/trace.jsonl",
+      "skippedPaidGraders": false,
+      "graders": [
+       {
+        "name": "said-hi",
+        "passed": false,
+        "weight": 1,
+        "explanation": "judge votes: FAIL FAIL FAIL",
+        "withOnly": false,
+        "scored": true,
+        "judgeVotes": [
+         false,
+         false,
+         false
+        ],
+        "evidence": "I couldn't greet Ana with the hello skill because no skill named `hello` is available in this session. The Skill tool returned \"Unknown skill: hello.\" The skills I can invoke don't include one by that name.\n\nHello, Ana! \ud83d\udc4b\n\nIf you want the skill used, check that it's installed or loaded in this project, or give me its exact name and I'll try again."
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.0027541,
+      "judgeCostUsd": 8.669999999999999e-05,
+      "durationSeconds": 8,
+      "startedAt": "2026-11-06T12:09:47.690Z",
+      "error": null,
+      "tracePath": "/KEPT/without-2/out/trace.jsonl",
+      "skippedPaidGraders": false,
+      "graders": [
+       {
+        "name": "said-hi",
+        "passed": false,
+        "weight": 1,
+        "explanation": "judge votes: FAIL FAIL FAIL",
+        "withOnly": false,
+        "scored": true,
+        "judgeVotes": [
+         false,
+         false,
+         false
+        ],
+        "evidence": "Ana, hello. I couldn't run the `hello` skill, though: it isn't in this session's skill list, and the Skill tool returned \"Unknown skill: hello.\" It may not be installed here, or it may be registered under a different name.\n\nIf you can tell me where the skill lives or how it's named, I'll try again. Otherwise I can greet Ana directly."
+       }
+      ]
+     }
+    ]
+   },
+   "aggregates": {
+    "score": 1,
+    "passRate": 1,
+    "scoreWithout": 0,
+    "passRateWithout": 0,
+    "delta": 1
+   }
+  }
+ ],
+ "aggregates": {
+  "casesTotal": 1,
+  "casesPassed": 1,
+  "overallScore": 1,
+  "overallPassRate": 1,
+  "meanDelta": 1
+ }
+}

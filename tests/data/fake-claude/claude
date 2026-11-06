@@ -8,6 +8,8 @@ Each run executes drill's scaffold in a fresh workspace, then plays the agent by
   apierror  the without arm hits an API error (score 0)
   skip      the agent never calls greet
   corrupt   the agent writes a broken line into .drill/trace.jsonl
+  notranscript  no run leaves a transcript at its tracePath
+Each run's transcript is the recorded one in tests/data/recorded for its arm.
 Like the real sandbox, the agent can't reach anything in CLAUDE_ENV_FILE's directory, which
 plugin eval denies as a credential. FAKE_SEAL=1 lays the kept dir out as on macOS: named e-*,
 with home/ and tmp/ moved into a mode-000 sealed/ and the kept dir read-only, and outside
@@ -20,6 +22,7 @@ denied = Path(os.environ["CLAUDE_ENV_FILE"]).parent.resolve()
 agent_env = dict(os.environ, PATH=os.pathsep.join(
     d for d in os.environ.get("PATH", "").split(os.pathsep) if d and not Path(d).resolve().is_relative_to(denied)))
 seal = os.environ.get("FAKE_SEAL") == "1"
+RECORDED = Path(__file__).resolve().parent.parent / "recorded" / "greet-ana"
 
 args = sys.argv[1:]
 assert args[:2] == ["plugin", "eval"], args
@@ -52,7 +55,8 @@ for case_dir in sorted((skill / "evals").iterdir()):
                 if mode == "corrupt":
                     with open(cwd / ".drill" / "trace.jsonl", "a") as f:
                         f.write('{"bin": "gre\n')
-            (kept / "out" / "trace.jsonl").write_text(json.dumps({"type": "result", "result": "Hi Ana"}) + "\n")
+            if mode != "notranscript":
+                (kept / "out" / "trace.jsonl").write_text((RECORDED / f"{arm}-1" / "transcript.jsonl").read_text())
             if seal:
                 (kept / "sealed").mkdir()
                 (kept / "home").rename(kept / "sealed" / "home")

@@ -36,7 +36,7 @@ def env_keep_list(rules: dict) -> list[str]:
     return sorted({k for r in rules.get("rules", []) if "env" in r for k in r["env"]})
 
 
-RULE_KEYS = {"order": (), "count": (), "in-stdin": ("of",), "env": ("of",), "stop-after": ()}
+RULE_KEYS = {"order": (), "count": (), "secret": (), "in-stdin": ("of",), "env": ("of",), "stop-after": ()}
 MATCHER_KEYS = {"bin", "args", "arg", "exit"}
 
 
@@ -73,6 +73,10 @@ def validate(rules: dict) -> None:
         for key in RULE_KEYS[kind]:
             if key not in r:
                 raise BadRules(f"rule {i + 1}: {kind} needs {key!r}")
+        if kind == "secret":
+            if not isinstance(r["secret"], str) or not r["secret"]:
+                raise BadRules(f"rule {i + 1}: secret takes a non-empty string")
+            continue
         targets = r["order"] if kind == "order" else [r[kind] if kind in ("count", "stop-after") else r["of"]]
         if kind == "order" and not isinstance(targets, list):
             raise BadRules(f"rule {i + 1}: order takes a list of calls")
@@ -82,7 +86,8 @@ def validate(rules: dict) -> None:
             raise BadRules(f"rule {i + 1}: env takes an object of NAME: value|null")
 
 
-def _literals(rules: dict) -> list[str]:
+def secrets(rules: dict) -> list[str]:
+    """The literals a rules file names, which drill masks wherever it prints."""
     return [r[k] for r in rules.get("rules", []) for k in ("in-stdin", "secret") if isinstance(r.get(k), str) and r[k]]
 
 
@@ -103,8 +108,10 @@ def _lines(xs) -> str:
     return "line " + ", ".join(str(x["line"]) for x in xs) if xs else "none"
 
 
-def check(rules: dict, trace: list[dict]) -> list[Verdict]:
-    literals = _literals(rules)
+def check(rules: dict, trace: list[dict], written: list[tuple[str, str]] = ()) -> list[Verdict]:
+    """One verdict per rule. `written` is what the agent wrote, from `transcript.agent_writing`,
+    which only the `secret` rule reads."""
+    literals = secrets(rules)
     trace = [c if "line" in c else dict(c, line=n) for n, c in enumerate(trace, 1)]
 
     def mask(s: str) -> str:
@@ -153,6 +160,11 @@ def check(rules: dict, trace: list[dict]) -> list[Verdict]:
             ok = len(xs) >= lo and (hi is None or len(xs) <= hi)
             v = Verdict(i, ok, f"count {name(r['count'])} in {lo}..{'∞' if hi is None else hi}",
                         f"{len(xs)} call(s): {_lines(xs)}")
+        elif "secret" in r:
+            lit = r["secret"]
+            where = [f"argv on {_lines([c])}" for c in trace if any(lit in a for a in c.get("argv") or [])]
+            where += sorted({w for w, text in written if lit in text})
+            v = Verdict(i, not where, f"secret <{label}>", "; ".join(where))
         elif "in-stdin" in r:
             xs = of(r["of"])
             bad = [c for c in xs if r["in-stdin"] not in (c.get("stdin") or "")]
