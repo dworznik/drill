@@ -14,5 +14,8 @@
    "body": {"id": "clm_01", "status": "funded", "tx": "0xfeed"}},
 
   {"method": "GET", "url": "https://testnet.garden/api/v1/acme/claims/*", "status": 404,
-   "body": {"error": "no such claim"}}
+   "body": {"error": "no such claim"}},
+
+  {"method": "POST", "url": "https://testnet.garden/api/v1/acme/claims?*", "status": 400,
+   "body": {"error": "send the secret in the body"}}
 ]
