@@ -1,0 +1,5 @@
+# `drill run` takes a local rig path; the rig pins the skill
+
+`drill run <path-to-rig>` is run from a `drill` checkout; the rigs repo holds no code and does not pin `drill`. The path is local only in v1, because a rig fetched by URL would sit in a cache clone where its results file is never committed. The rig's `rig.json` pins the skill as `repo` (`owner/repo`), `sha` (a full SHA, never a branch) and `path` (subpath, e.g. `skills/ci`). drill keeps a bare clone per repo in a cache, using the caller's git credentials, and exports a throwaway copy at that SHA for every drill, since `claude plugin eval` writes cases into the skill's `evals/`. `--skill <dir>` points at a local working tree instead. Decided in [How drill is pointed at a rig and a skill](https://github.com/dworznik/drill/issues/16).
+
+A rig is `rig.json` and `cases/` (both required) plus `results/`, which drill creates. The manifest records three revisions, each with a dirty flag: the skill SHA, the `drill` SHA, and the last rigs-repo commit touching the rig directory. There is no separate shim version, because shims live in `drill`.
