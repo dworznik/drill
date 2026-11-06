@@ -1,0 +1,84 @@
+== 1. happy path: exact argv, JSON stdout, stderr-only answer
+
+$ gh auth status
+github.com
+  ✓ Logged in to github.com account octo-drill (GH_TOKEN)
+[exit 0]
+trace: {"bin":"gh","argv":["auth","status"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":0}
+
+$ gh repo view --json name,owner,defaultBranchRef
+{"name":"widgets","owner":{"login":"octo-drill"},"defaultBranchRef":{"name":"main"}}
+[exit 0]
+trace: {"bin":"gh","argv":["repo","view","--json","name,owner,defaultBranchRef"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":1}
+
+== 2. big answer from a file, an exact entry beating a glob, and the glob returning an error
+
+$ gh api repos/octo-drill/widgets/actions/workflows
+{"total_count":1,"workflows":[{"id":101,"name":"ci","path":".github/workflows/ci.yml","state":"active"}]}
+[exit 0]
+trace: {"bin":"gh","argv":["api","repos/octo-drill/widgets/actions/workflows"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":2}
+
+$ gh api repos/octo-drill/widgets/contents/README.md
+{"name":"README.md","type":"file"}
+[exit 0]
+trace: {"bin":"gh","argv":["api","repos/octo-drill/widgets/contents/README.md"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":3}
+
+$ gh api repos/octo-drill/widgets/contents/.github/workflows/ci.yml
+gh: Not Found (HTTP 404)
+[exit 1]
+trace: {"bin":"gh","argv":["api","repos/octo-drill/widgets/contents/.github/workflows/ci.yml"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":4}
+
+== 3. polling: the same argv twice gets two different answers, then sticks
+
+$ gh run view 4242 --json status
+{"status":"in_progress"}
+[exit 0]
+trace: {"bin":"gh","argv":["run","view","4242","--json","status"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":5}
+
+$ gh run view 4242 --json status
+{"status":"completed"}
+[exit 0]
+trace: {"bin":"gh","argv":["run","view","4242","--json","status"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":6}
+
+$ gh run view 4242 --json status
+{"status":"completed"}
+[exit 0]
+trace: {"bin":"gh","argv":["run","view","4242","--json","status"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":6}
+
+== 4. misses: flags in another order, an extra --jq, an unknown command
+
+$ gh repo view --json name,owner,defaultBranchRef --jq .name
+drill-shim: no fixture for: gh repo view --json name,owner,defaultBranchRef --jq .name
+[exit 127]
+trace: {"bin":"gh","argv":["repo","view","--json","name,owner,defaultBranchRef","--jq",".name"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":null}
+
+$ gh repo view --json name
+drill-shim: no fixture for: gh repo view --json name
+[exit 127]
+trace: {"bin":"gh","argv":["repo","view","--json","name"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":null}
+
+$ gh pr list
+drill-shim: no fixture for: gh pr list
+[exit 127]
+trace: {"bin":"gh","argv":["pr","list"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":null}
+
+== 5. stdin is recorded, called from a subdirectory
+
+$ echo '{"title":"x"}' | gh api repos/octo-drill/widgets/issues --input -
+drill-shim: no fixture for: gh api repos/octo-drill/widgets/issues --input -
+[exit 127]
+trace: {"bin":"gh","argv":["api","repos/octo-drill/widgets/issues","--input","-"],"stdin":"{\"title\":\"x\"}\n","env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":null}
+
+== full trace ($TMPDIR/drill-proto.XXXX/workspace/.drill/trace.jsonl)
+{"bin":"gh","argv":["auth","status"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":0}
+{"bin":"gh","argv":["repo","view","--json","name,owner,defaultBranchRef"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":1}
+{"bin":"gh","argv":["api","repos/octo-drill/widgets/actions/workflows"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":2}
+{"bin":"gh","argv":["api","repos/octo-drill/widgets/contents/README.md"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":3}
+{"bin":"gh","argv":["api","repos/octo-drill/widgets/contents/.github/workflows/ci.yml"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":4}
+{"bin":"gh","argv":["run","view","4242","--json","status"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":5}
+{"bin":"gh","argv":["run","view","4242","--json","status"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":6}
+{"bin":"gh","argv":["run","view","4242","--json","status"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":6}
+{"bin":"gh","argv":["repo","view","--json","name,owner,defaultBranchRef","--jq",".name"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":null}
+{"bin":"gh","argv":["repo","view","--json","name"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":null}
+{"bin":"gh","argv":["pr","list"],"stdin":null,"env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":null}
+{"bin":"gh","argv":["api","repos/octo-drill/widgets/issues","--input","-"],"stdin":"{\"title\":\"x\"}\n","env":["GH_TOKEN","GITHUB_TOKEN"],"fixture":null}

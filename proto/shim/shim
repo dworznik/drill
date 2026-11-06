@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# PROTOTYPE (drill#7, throwaway branch proto/7-shim-interface). Not lib/ code.
+#
+# One generic shim for every faked binary. drill puts a symlink per binary
+# (bin/gh -> shim) on the prepended PATH; the binary's name is basename $0.
+#
+# At call time it:
+#   1. walks up from $PWD to the `.drill/` marker (the run's workspace, per #3);
+#   2. appends {bin, argv, stdin, env} to .drill/trace.jsonl;
+#   3. answers from .drill/fixtures/<bin>.json, a JSON array of entries
+#      {argv, stdout | stdout_file, stderr, exit}, matched on exact argv,
+#      where each argv element is a glob ("*" matches any run of characters,
+#      including "/" and nothing) and the argv lengths must be equal;
+#   4. the first matching entry in file order wins; if later entries repeat
+#      its argv pattern exactly, they form a sequence: the Nth identical call
+#      gets the Nth one and the last sticks (polling `gh run view` until done);
+#   5. on no match: stderr names the miss, exit 127, and the trace says so.
+set -uo pipefail
+
+bin=$(basename "$0")
+
+dir=$PWD
+while [[ $dir != / && ! -d $dir/.drill ]]; do dir=$(dirname "$dir"); done
+if [[ ! -d $dir/.drill ]]; then
+    echo "drill-shim: $bin called outside a drill workspace (no .drill/ above $PWD)" >&2
+    exit 127
+fi
+drill=$dir/.drill
+trace=$drill/trace.jsonl
+fixtures=$drill/fixtures/$bin.json
+
+argv=$(jq -cn '$ARGS.positional' --args -- "$@")
+
+# stdin: read it only when it is a pipe or a file. Never read a terminal or
+# an inherited socket, which could block the agent's call forever.
+stdin=null
+if [[ -p /dev/stdin || -f /dev/stdin ]]; then
+    stdin=$(jq -Rs 'if . == "" then null else . end')
+fi
+
+# env subset: presence only, never values (what to record is #6's call).
+env=$(jq -cn '[ $ARGS.positional[] | select(env[.] != null) ]' --args GH_TOKEN GITHUB_TOKEN GH_HOST)
+
+# Which fixture entries match this argv, and how many times has it been called?
+matches='[]'
+if [[ -f $fixtures ]]; then
+    matches=$(jq -c --argjson argv "$argv" '
+        [ to_entries[]
+          | select((.value.argv | length) == ($argv | length))
+          | select([.value.argv, $argv] | transpose | all(
+              .[1] as $arg
+              | ("^" + (.[0] | gsub("(?<c>[.+?^${}()|\\[\\]\\\\])"; "\\\(.c)") | gsub("\\*"; ".*")) + "$") as $re
+              | $arg | test($re)))
+          | .key ] as $hits
+        | if ($hits | length) == 0 then []
+          else (.[$hits[0]].argv) as $first
+               | [ $hits[] as $i | select(.[$i].argv == $first) | $i ]
+          end' "$fixtures")
+fi
+prior=0
+if [[ -f $trace ]]; then
+    prior=$(jq -s --arg bin "$bin" --argjson argv "$argv" \
+        '[ .[] | select(.bin == $bin and .argv == $argv) ] | length' "$trace")
+fi
+pick=$(jq -n --argjson m "$matches" --argjson n "$prior" \
+    'if ($m | length) == 0 then null else $m[[$n, ($m | length) - 1] | min] end')
+
+jq -cn --arg bin "$bin" --argjson argv "$argv" --argjson stdin "$stdin" \
+    --argjson env "$env" --argjson fixture "$pick" \
+    '{bin: $bin, argv: $argv, stdin: $stdin, env: $env, fixture: $fixture}' >>"$trace"
+
+if [[ $pick == null ]]; then
+    echo "drill-shim: no fixture for: $bin $*" >&2
+    exit 127
+fi
+
+entry=$(jq -c ".[$pick]" "$fixtures")
+if file=$(jq -er '.stdout_file // empty' <<<"$entry"); then
+    cat "$drill/fixtures/$file"
+else
+    # stdout may be a string (printed raw) or any JSON value (printed as JSON).
+    jq -j '.stdout // "" | if type == "string" then . else tojson + "\n" end' <<<"$entry"
+fi
+jq -j '.stderr // ""' <<<"$entry" >&2
+exit "$(jq '.exit // 0' <<<"$entry")"
