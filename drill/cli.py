@@ -1,27 +1,38 @@
 """The `drill` console script: `drill run <rig>`, `drill compare`, `drill table`."""
 
 import argparse
+import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
+from drill.rig import Refusal, load_rig
+from drill.skill import BadPin, SkillCache, drill_revision, local_skill, revision
 
-class Refusal(Exception):
-    """A drill that can't start, with the message the caller sees."""
 
-
-def check_rig(rig: Path) -> None:
-    """Refuse a rig that lacks the parts every drill needs (ADR-0002)."""
-    if not rig.is_dir():
-        raise Refusal(f"no rig directory at {rig}")
-    if not (rig / "rig.json").is_file():
-        raise Refusal(f"{rig} has no rig.json")
-    if not (rig / "cases").is_dir():
-        raise Refusal(f"{rig} has no cases/ directory")
+@contextmanager
+def skill_copy(rig, skill_dir: Path | None):
+    """The throwaway skill copy for this drill and its revision."""
+    if skill_dir is not None:
+        if not skill_dir.is_dir():
+            raise Refusal(f"--skill: no directory at {skill_dir}")
+        with local_skill(skill_dir) as (copy, rev):
+            yield copy, rev
+        return
+    pin = rig.pin()
+    try:
+        with SkillCache().export(pin) as copy:
+            yield copy, {"sha": pin.sha, "dirty": False}
+    except BadPin as e:
+        raise Refusal(str(e)) from e
 
 
 def cmd_run(args) -> int:
-    check_rig(args.rig)
-    print(f"drill: {args.rig}: nothing to run yet")
+    rig = load_rig(args.rig)
+    with skill_copy(rig, args.skill) as (skill, skill_rev):
+        revisions = {"skill": skill_rev, "drill": drill_revision(), "rig": revision(rig.path)}
+        print(json.dumps({"revisions": revisions}, indent=2))
+        print(f"drill: {args.rig}: nothing to run yet")
     return 0
 
 
@@ -39,6 +50,8 @@ def parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="drill a skill from a local rig directory")
     run.add_argument("rig", type=Path, help="path to the rig (holds rig.json and cases/)")
+    run.add_argument("--skill", type=Path, metavar="DIR",
+                     help="drill this local skill working tree instead of the rig's pin")
     run.set_defaults(func=cmd_run)
 
     compare = sub.add_parser("compare", help="diff two results files (not built yet)")

@@ -55,5 +55,23 @@ class UnbuiltCommands(unittest.TestCase):
         self.assertNotEqual(code, 0)
 
 
+class DrillRunRefusesABadPin(unittest.TestCase):
+    def test_branch_pin_is_refused_before_anything_runs(self):
+        rig = Path(tempfile.mkdtemp())
+        (rig / "cases").mkdir()
+        (rig / "rig.json").write_text('{"repo": "octo/skills", "sha": "main", "path": "skills/ci"}')
+        code, _, err = run_cli("run", str(rig))
+        self.assertNotEqual(code, 0)
+        self.assertIn("full 40-character SHA", err)
+
+    def test_invalid_json_is_refused(self):
+        rig = Path(tempfile.mkdtemp())
+        (rig / "cases").mkdir()
+        (rig / "rig.json").write_text("{")
+        code, _, err = run_cli("run", str(rig))
+        self.assertNotEqual(code, 0)
+        self.assertIn("not valid JSON", err)
+
+
 if __name__ == "__main__":
     unittest.main()
