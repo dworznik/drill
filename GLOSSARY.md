@@ -11,8 +11,12 @@ An agent skill package (a `SKILL.md` and its files) under test, owned by an exte
 _Avoid_: plugin, prompt
 
 **Rig**:
-drill's per-skill setup for one skill: its shims, fixtures, held-out cases and results.
+The per-skill setup drill is pointed at: a pin, shims, fixtures, held-out cases and results. Rigs live in the private rigs repo, never in drill.
 _Avoid_: harness, suite, skill directory
+
+**Pin**:
+A rig's reference to the exact skill revision its cases were written against.
+_Avoid_: version, lock
 
 **Case**:
 One prompt plus the expectations its run is checked against.
@@ -66,5 +70,5 @@ The record a drill leaves: per-case outcomes over its runs, plus a manifest.
 _Avoid_: report, scorecard
 
 **Manifest**:
-The provenance stamped on a results file: skill revision, runner, model, run count, date and shim versions.
+The provenance stamped on a results file: the skill, drill and rig revisions (each flagged if uncommitted), runner, model, run count and date.
 _Avoid_: metadata, header
