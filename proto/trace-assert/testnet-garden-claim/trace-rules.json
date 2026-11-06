@@ -1,0 +1,23 @@
+{
+  "calls": {
+    "tenant":    { "bin": "curl", "arg": "^https://testnet\\.garden/api/v1/acme$" },
+    "params":    { "bin": "rln",  "args": ["params"] },
+    "start":     { "bin": "curl", "arg": "^https://testnet\\.garden/api/v1/acme/claims$" },
+    "sign":      { "bin": "rln",  "args": ["account", "sign"] },
+    "finish":    { "bin": "curl", "arg": "^https://testnet\\.garden/api/v1/acme/claims/[^/]+/signature$" },
+    "poll":      { "bin": "curl", "arg": "^https://testnet\\.garden/api/v1/acme/claims/[^/]+$" },
+    "balance":   { "bin": "rln",  "args": ["balance"] },
+    "rln":       { "bin": "rln" },
+    "elsewhere": { "bin": "curl", "arg": "^https?://(?!testnet\\.garden/)" }
+  },
+  "rules": [
+    { "order": ["tenant", "params", "start", "sign", "finish", "poll", "balance"] },
+    { "count": "start", "min": 1, "max": 1 },
+    { "count": "poll", "min": 1, "max": 25 },
+    { "count": "elsewhere", "max": 0 },
+    { "never-in-argv": "7Qm2XkP9fLr4TzWc8NbVh3", "label": "link secret" },
+    { "in-stdin": "7Qm2XkP9fLr4TzWc8NbVh3", "of": "start", "label": "link secret" },
+    { "env": { "RLN_AGENT": "1" }, "of": "rln" },
+    { "stop-after": { "bin": "rln", "exit": 3 } }
+  ]
+}

@@ -1,0 +1,6 @@
+{"bin":"curl","argv":["-sS","https://testnet.garden/api/v1/acme"],"env":{},"stdin":null,"exit":0}
+{"bin":"rln","argv":["params","--network","garden-sepolia","--json"],"env":{"RLN_AGENT":"1"},"stdin":null,"exit":0}
+{"bin":"curl","argv":["-sS","-o","/tmp/testnet-garden-claim.json","-w","%{http_code}\\n","-H","content-type: application/json","--data","@-","https://testnet.garden/api/v1/acme/claims"],"env":{},"stdin":"{\"secret\":\"7Qm2XkP9fLr4TzWc8NbVh3\",\"recipient\":\"0x1111111111111111111111111111111111111111\"}","exit":0}
+{"bin":"rln","argv":["account","sign","--account","agent-1","--message-file","-","--json"],"env":{"RLN_AGENT":"1"},"stdin":"testnet.garden claim clm_01 for 0x1111111111111111111111111111111111111111","exit":3}
+{"bin":"curl","argv":["-sS","-o","/tmp/testnet-garden-drip.json","-w","%{http_code}\\n","-H","content-type: application/json","--data","@-","https://testnet.garden/api/v1/acme/claims/clm_01/signature"],"env":{},"stdin":"{\"signature\":\"0xabc123\"}","exit":0}
+{"bin":"curl","argv":["-sS","https://testnet.garden/api/v1/acme/claims/clm_01"],"env":{},"stdin":null,"exit":0}

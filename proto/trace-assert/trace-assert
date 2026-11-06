@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# PROTOTYPE (proto/6-trace-assert, never merged): check one run's trace
+# against a case's trace rules.  usage: trace-assert <trace-rules.json> <trace.jsonl>
+# Prints one line per rule; exits 1 if any rule fails.
+set -euo pipefail
+rules=$1 trace=$2
+out=$(jq -nr --slurpfile r "$rules" --rawfile t "$trace" '
+  def subseq($want; $have):
+    (reduce $have[] as $x (0; if . < ($want|length) and $want[.] == $x then .+1 else . end)) == ($want|length);
+  def hit($c):
+    ($c.bin  == null or $c.bin  == .bin)
+    and ($c.exit == null or $c.exit == .exit)
+    and ($c.arg  == null or any(.argv[]; test($c.arg)))
+    and ($c.args == null or subseq($c.args; .argv));
+  def mask($s): gsub($s; "<redacted>");
+  ($r[0]) as $R
+  | ($t | split("\n") | map(select(length > 0) | fromjson) | to_entries | map(.value + {line: (.key + 1)})) as $T
+  | def m($x): if ($x|type) == "string" then ($R.calls[$x] // error("unknown call name \($x)")) else $x end;
+    def name($x): if ($x|type) == "string" then $x else ($x|tojson) end;
+    def lines($xs): if ($xs|length) == 0 then "none" else "line " + ($xs | map(.line|tostring) | join(", ")) end;
+    $R.rules[]
+    | . as $rule
+    | if has("order") then
+        (reduce $T[] as $c (0; . as $i | if $i < ($rule.order|length) and ($c | hit(m($rule.order[$i]))) then $i+1 else $i end)) as $k
+        | {ok: ($k == ($rule.order|length)),
+           what: "order: \($rule.order | join(" → "))",
+           why: (if $k == ($rule.order|length) then "" else "no \($rule.order[$k]) after \(if $k == 0 then "the start" else $rule.order[$k-1] end)" end)}
+      elif has("count") then
+        [$T[] | select(hit(m($rule.count)))] as $xs
+        | ($rule.min // 0) as $lo | ($rule.max // infinite) as $hi
+        | {ok: (($xs|length) >= $lo and ($xs|length) <= $hi),
+           what: "count \(name($rule.count)) in \($lo)..\(if $hi == infinite then "∞" else $hi end)",
+           why: "\($xs|length) call(s): \(lines($xs))"}
+      elif has("never-in-argv") then
+        [$T[] | select(any(.argv[]; contains($rule["never-in-argv"])))] as $xs
+        | {ok: ($xs|length == 0), what: "never-in-argv <\($rule.label // "literal")>",
+           why: ($xs | map("line \(.line): \(.bin) \(.argv | join(" ") | mask($rule["never-in-argv"]))") | join("; "))}
+      elif has("in-stdin") then
+        [$T[] | select(hit(m($rule.of)))] as $of
+        | [$of[] | select((.stdin // "") | contains($rule["in-stdin"]) | not)] as $xs
+        | {ok: ($xs|length == 0 and ($of|length) > 0), what: "in-stdin <\($rule.label // "literal")> of \(name($rule.of))",
+           why: (if ($of|length) == 0 then "no \(name($rule.of)) call" else "missing on \(lines($xs))" end)}
+      elif has("env") then
+        [$T[] | select(hit(m($rule.of)))] as $of
+        | [$of[] | . as $c | select(any($rule.env | to_entries[];
+              if .value == null then ($c.env | has(.key) | not) else $c.env[.key] != .value end))] as $xs
+        | {ok: ($xs|length == 0), what: "env \($rule.env | to_entries | map("\(.key)=\(.value // "*")") | join(" ")) on \(name($rule.of))",
+           why: "\($of|length) call(s), wrong on \(lines($xs))"}
+      elif has("stop-after") then
+        ([$T[] | select(hit(m($rule["stop-after"]))) | .line] | first) as $at
+        | [$T[] | select($at != null and .line > $at)] as $xs
+        | {ok: ($xs|length == 0), what: "stop-after \(name($rule["stop-after"]))",
+           why: (if $at == null then "never happened" else "line \($at), then \(lines($xs))" end)}
+      else error("unknown rule \(keys)") end
+    | "\(if .ok then "ok  " else "FAIL" end) \(.what)\(if .why != "" then "  (\(.why))" else "" end)"
+')
+printf '%s\n' "$out"
+[[ $out != *FAIL* ]]
