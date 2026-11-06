@@ -1,0 +1,3 @@
+[
+  {"argv": ["--name", "Ana"], "stdout": "Hi Ana, from greet\n"}
+]

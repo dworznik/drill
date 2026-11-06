@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""A stand-in for `claude plugin eval`: same kept-dir layout and aggregate shape, no model.
+
+Each run executes drill's scaffold in a fresh workspace, then plays the agent by calling
+`greet --name Ana` through the shims on PATH. FAKE_EVAL picks a scenario:
+  ok        both arms score 1
+  low       the with arm scores 0.5
+  apierror  the without arm hits an API error (score 0)
+  skip      the agent never calls greet
+"""
+import json, os, subprocess, sys, tempfile
+from pathlib import Path
+
+args = sys.argv[1:]
+assert args[:2] == ["plugin", "eval"], args
+skill = Path(args[2])
+out = Path(args[args.index("--output-dir") + 1])
+runs = int(args[args.index("--runs") + 1]) if "--runs" in args else 1
+mode = os.environ.get("FAKE_EVAL", "ok")
+if args[args.index("--model") + 1] == "broken":
+    sys.exit("Error: unknown model broken")
+cases = []
+for case_dir in sorted((skill / "evals").iterdir()):
+    arms = {}
+    for arm in ("with", "without"):
+        arms[arm] = []
+        for _ in range(runs):
+            kept = Path(tempfile.mkdtemp(prefix="claude-eval-"))
+            cwd = kept / "home" / "cwd"
+            cwd.mkdir(parents=True)
+            (kept / "out").mkdir()
+            subprocess.run(["bash", str(case_dir / ".drill-scaffold.sh")], cwd=cwd, check=True)
+            error = None
+            if mode == "apierror" and arm == "without":
+                error = "API Error: 529 overloaded"
+            elif mode != "skip":
+                subprocess.run(["greet", "--name", "Ana"], cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True)
+            (kept / "out" / "trace.jsonl").write_text(json.dumps({"type": "result", "result": "Hi Ana"}) + "\n")
+            score = 0.0 if error else (0.5 if mode == "low" and arm == "with" else 1.0)
+            arms[arm].append({"score": score, "passed": score == 1.0, "error": error,
+                              "tracePath": str(kept / "out" / "trace.jsonl"), "graders": []})
+    cases.append({"name": case_dir.name, "dir": f"evals/{case_dir.name}", "arms": arms})
+out.mkdir(parents=True, exist_ok=True)
+(out / "aggregate-result.json").write_text(json.dumps({"schemaVersion": 1, "claudeVersion": "9.9.9-fake",
+                                                       "costUsd": 0, "durationSeconds": 1, "partial": False,
+                                                       "cases": cases}))
+(out / "report.html").write_text("<html></html>")
+sys.exit(0)

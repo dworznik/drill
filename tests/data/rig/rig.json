@@ -1,0 +1,6 @@
+{
+  "repo": "octo/skills",
+  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "path": "skills/hello",
+  "shims": ["greet"]
+}

@@ -6,7 +6,10 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
+from drill.cases import load_cases
+from drill.drill import drill
 from drill.rig import Refusal, load_rig
+from drill.runners.plugin_eval import Model
 from drill.skill import BadPin, SkillCache, drill_revision, local_skill, revision
 
 
@@ -29,10 +32,27 @@ def skill_copy(rig, skill_dir: Path | None):
 
 def cmd_run(args) -> int:
     rig = load_rig(args.rig)
+    if args.skill is None:
+        rig.pin()  # refuse a bad pin before anything else
+    cases = load_cases(rig.path / "cases")
+    if not args.model:
+        raise Refusal("run needs at least one --model <id>")
+    try:
+        models = [Model.parse(m) for m in args.model]
+    except ValueError as e:
+        raise Refusal(str(e)) from e
+    rig_rev = revision(rig.path)  # before drill writes results/
     with skill_copy(rig, args.skill) as (skill, skill_rev):
-        revisions = {"skill": skill_rev, "drill": drill_revision(), "rig": revision(rig.path)}
-        print(json.dumps({"revisions": revisions}, indent=2))
-        print(f"drill: {args.rig}: nothing to run yet")
+        revisions = {"skill": skill_rev, "drill": drill_revision(), "rig": rig_rev}
+        path = drill(rig, cases, skill, revisions, models, runs=args.runs)
+    results = json.loads(path.read_text())
+    for r in results["runs"]:
+        print(f"{r['status']:<5}  {r['case']}  {r['model']}  {r['arm']} #{r['run']}  score {r['score']:.2f}"
+              + (f"  {r['error'][:120]}" if r["error"] else ""))
+        for v in r["trace"]:
+            if not v["ok"]:
+                print(f"         FAIL {v['rule']}  ({v['why']})")
+    print(f"drill: wrote {path}")
     return 0
 
 
@@ -50,6 +70,9 @@ def parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="drill a skill from a local rig directory")
     run.add_argument("rig", type=Path, help="path to the rig (holds rig.json and cases/)")
+    run.add_argument("--model", action="append", default=[], metavar="ID[:K=V,...]",
+                     help="model to drill on; repeat for several")
+    run.add_argument("--runs", type=int, help="runs per case (default: plugin eval's, 3)")
     run.add_argument("--skill", type=Path, metavar="DIR",
                      help="drill this local skill working tree instead of the rig's pin")
     run.set_defaults(func=cmd_run)
