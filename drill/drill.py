@@ -9,7 +9,8 @@ from pathlib import Path
 
 from drill.cases import Case
 from drill.lib.shim import install_shims
-from drill.lib.trace_rules import Verdict, check, load_trace
+from drill.lib.trace_rules import REDACTED, Verdict, check, load_trace, secrets
+from drill.lib.transcript import agent_writing
 from drill.rig import Rig
 from drill.skill import user_cache
 from drill.runners import plugin_eval
@@ -104,21 +105,25 @@ def collect(r: plugin_eval.RunRecord, case: Case | None, model, out: Path) -> di
     dest.mkdir(parents=True, exist_ok=True)
     error = r.error
     verdicts: list[Verdict] = []
+    written = []
     if r.transcript:
         shutil.copyfile(r.transcript, dest / "transcript.jsonl")
+        written = agent_writing(r.transcript)
     elif not error:
         error = "drill: no transcript at plugin eval's tracePath"
     if r.trace and r.trace.is_file():
         shutil.copyfile(r.trace, dest / "trace.jsonl")
         if case is not None:
             try:
-                verdicts = check(case.rules, load_trace(r.trace))
+                verdicts = check(case.rules, load_trace(r.trace), written)
             except ValueError as e:  # the agent can write to the trace; JSONDecodeError and UnicodeDecodeError are ValueErrors
                 error = error or f"drill: unreadable trace (.drill/trace.jsonl): {e}"
     elif not error:
         error = "drill: no trace (.drill/trace.jsonl) in the run's workspace"
     if case is None and not error:
         error = f"drill: plugin eval ran a case drill didn't copy: {r.case}"
+    for lit in secrets(case.rules if case else {}):
+        error = error and error.replace(lit, REDACTED)
     return {"case": r.case, "model": model.id, "arm": r.arm, "run": r.index + 1, "score": r.score,
             "error": error, "trace": [{"rule": v.what, "ok": v.ok, "why": v.why} for v in verdicts],
             "status": run_status(r.score, error, verdicts)}

@@ -4,6 +4,7 @@ The end-to-end tests drive drill() against tests/data/fake-claude/claude, which 
 same temp-dir layout and aggregate-result.json shape that plugin eval 2.1.318 does.
 """
 
+import io
 import json
 import os
 import shutil
@@ -11,9 +12,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import redirect_stdout
 from unittest import mock
 
 from drill.cases import load_cases
+from drill.cli import main
 from drill.drill import drill, run_root, run_status
 from drill.lib.trace_rules import Verdict
 from drill.rig import Refusal, load_rig
@@ -195,8 +198,11 @@ class ModelSpec(unittest.TestCase):
 class EndToEnd(unittest.TestCase):
     """drill() against the fake plugin eval."""
 
-    def drill(self, mode, runs=None):
-        rig = load_rig(copy_rig())
+    def drill(self, mode, runs=None, rules=None):
+        rig_dir = copy_rig()
+        if rules is not None:
+            (rig_dir / "cases" / "greet-ana" / "trace-rules.json").write_text(json.dumps(rules))
+        rig = load_rig(rig_dir)
         cases = load_cases(rig.path / "cases")
         self.root = Path(tempfile.mkdtemp())
         with mock.patch.dict(os.environ, {"FAKE_EVAL": mode}):
@@ -256,6 +262,34 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(self.statuses(results), {("with", 1): "error", ("without", 1): "error"})
         self.assertIn("unreadable trace", results["runs"][0]["error"])
         self.assertTrue(path.is_file())
+
+    def test_a_run_without_a_transcript_is_error(self):
+        _, results = self.drill("notranscript")
+        self.assertEqual(self.statuses(results), {("with", 1): "error", ("without", 1): "error"})
+        self.assertIn("no transcript", results["runs"][0]["error"])
+
+    def test_a_secret_the_agent_wrote_fails_the_run_and_is_never_printed(self):
+        # the recorded with-arm agent repeats greet's output; the without-arm agent never ran greet
+        rules = {"rules": [{"secret": "from greet", "label": "greeting"}]}
+        path, results = self.drill("ok", rules=rules)
+        self.assertEqual(self.statuses(results), {("with", 1): "fail", ("without", 1): "pass"})
+        self.assertEqual(results["runs"][0]["trace"],
+                         [{"rule": "secret <greeting>", "ok": False, "why": "assistant text"}])
+        self.assertNotIn("from greet", path.read_text())
+        transcript = path.with_suffix("") / "haiku" / "greet-ana" / "with-1" / "transcript.jsonl"
+        self.assertIn("from greet", transcript.read_text())  # raw evidence keeps it as recorded
+
+    def test_the_cli_never_prints_a_secret(self):
+        rig = copy_rig()
+        (rig / "cases" / "greet-ana" / "trace-rules.json").write_text(
+            json.dumps({"rules": [{"secret": "--name", "label": "flag"}]}))  # in greet's argv
+        out = io.StringIO()
+        path = f"{DATA / 'fake-claude'}{os.pathsep}{os.environ['PATH']}"
+        with mock.patch.dict(os.environ, {"FAKE_EVAL": "ok", "PATH": path, "TMPDIR": tempfile.mkdtemp(dir=Path.home())}), \
+                redirect_stdout(out):
+            self.assertEqual(main(["run", str(rig), "--skill", str(skill_copy()), "--model", "haiku"]), 0)
+        self.assertIn("FAIL secret <flag>", out.getvalue())
+        self.assertNotIn("--name", out.getvalue())
 
     def test_a_claude_that_cannot_start_is_recorded_as_a_model_error(self):
         rig = load_rig(copy_rig())
