@@ -9,7 +9,7 @@ from drill.lib.trace_rules import BadRules, validate
 from drill.rig import Refusal
 
 OWN_SCAFFOLD = re.compile(r"^[^#\n]*\bscaffold_script\s*:", re.MULTILINE)
-INLINE_CONTEXT = re.compile(r"^context\s*:\s*[^#\s]", re.MULTILINE)
+INLINE_CONTEXT = re.compile(r"^context[^\S\n]*:[^\S\n]*[^#\s]", re.MULTILINE)  # spaces only: a block starts on the next line
 
 
 @dataclass(frozen=True)

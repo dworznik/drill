@@ -114,7 +114,10 @@ def run(skill: Path, model: Model, bin_dir: Path, env_file: Path, tmp_dir: Path,
         cmd += ["--runs", str(runs)]
     env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", CLAUDE_ENV_FILE=str(env_file),
                TMPDIR=str(tmp_dir))
-    proc = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, text=True, capture_output=True)
+    try:
+        proc = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, text=True, capture_output=True)
+    except OSError as e:
+        raise RuntimeError(f"could not start {claude} for {model.id}: {e}") from e
     aggregate = out_dir / "aggregate-result.json"
     if not aggregate.is_file():
         tail = "\n".join((proc.stderr or proc.stdout).strip().splitlines()[-15:])

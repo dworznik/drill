@@ -7,6 +7,7 @@ Each run executes drill's scaffold in a fresh workspace, then plays the agent by
   low       the with arm scores 0.5
   apierror  the without arm hits an API error (score 0)
   skip      the agent never calls greet
+  corrupt   the agent writes a broken line into .drill/trace.jsonl
 """
 import json, os, subprocess, sys, tempfile
 from pathlib import Path
@@ -35,6 +36,9 @@ for case_dir in sorted((skill / "evals").iterdir()):
                 error = "API Error: 529 overloaded"
             elif mode != "skip":
                 subprocess.run(["greet", "--name", "Ana"], cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True)
+                if mode == "corrupt":
+                    with open(cwd / ".drill" / "trace.jsonl", "a") as f:
+                        f.write('{"bin": "gre\n')
             (kept / "out" / "trace.jsonl").write_text(json.dumps({"type": "result", "result": "Hi Ana"}) + "\n")
             score = 0.0 if error else (0.5 if mode == "low" and arm == "with" else 1.0)
             arms[arm].append({"score": score, "passed": score == 1.0, "error": error,

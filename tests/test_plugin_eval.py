@@ -70,6 +70,16 @@ class CaseCopy(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, "as a block"):
             load_cases(rig / "cases")
 
+    def test_a_block_context_loads(self):
+        rig = copy_rig()
+        (rig / "cases" / "greet-ana" / "case.yaml").write_text('schema_version: "1.0"\ncontext:\n  add_dirs:\n    - d\n')
+        self.assertEqual(len(load_cases(rig / "cases")), 1)
+
+    def test_an_empty_context_followed_by_a_top_level_key_loads(self):
+        rig = copy_rig()
+        (rig / "cases" / "greet-ana" / "case.yaml").write_text('context:\nschema_version: "1.0"\n')
+        self.assertEqual(len(load_cases(rig / "cases")), 1)
+
     def test_an_unknown_call_in_an_order_rule_is_refused(self):
         rig = copy_rig()
         (rig / "cases" / "greet-ana" / "trace-rules.json").write_text('{"rules": [{"order": ["nope"]}]}')
@@ -240,6 +250,21 @@ class EndToEnd(unittest.TestCase):
         self.assertIn("left no aggregate-result.json", results["manifest"]["models"][0]["error"])
         self.assertEqual({r["model"] for r in results["runs"]}, {"haiku"})
         self.assertEqual(list(root.iterdir()), [])
+
+    def test_a_corrupt_trace_is_an_error_and_the_results_are_still_written(self):
+        path, results = self.drill("corrupt")
+        self.assertEqual(self.statuses(results), {("with", 1): "error", ("without", 1): "error"})
+        self.assertIn("unreadable trace", results["runs"][0]["error"])
+        self.assertTrue(path.is_file())
+
+    def test_a_claude_that_cannot_start_is_recorded_as_a_model_error(self):
+        rig = load_rig(copy_rig())
+        root = Path(tempfile.mkdtemp())
+        path = drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("haiku", {})],
+                     claude=str(root / "no-such-claude"), log=lambda *_: None, root=root)
+        results = json.loads(path.read_text())
+        self.assertIn("could not start", results["manifest"]["models"][0]["error"])
+        self.assertEqual(results["runs"], [])
 
     def test_every_run_is_read_back(self):
         _, results = self.drill("ok", runs=3)

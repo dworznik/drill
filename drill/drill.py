@@ -108,7 +108,10 @@ def collect(r: plugin_eval.RunRecord, case: Case | None, model, out: Path) -> di
     if r.trace and r.trace.is_file():
         shutil.copyfile(r.trace, dest / "trace.jsonl")
         if case is not None:
-            verdicts = check(case.rules, load_trace(r.trace))
+            try:
+                verdicts = check(case.rules, load_trace(r.trace))
+            except ValueError as e:  # the agent can write to the trace; JSONDecodeError and UnicodeDecodeError are ValueErrors
+                error = error or f"drill: unreadable trace (.drill/trace.jsonl): {e}"
     elif not error:
         error = "drill: no trace (.drill/trace.jsonl) in the run's workspace"
     if case is None and not error:
