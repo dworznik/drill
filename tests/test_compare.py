@@ -111,6 +111,14 @@ class Compare(unittest.TestCase):
         _, out, _ = run_cli("compare", str(a), str(b))
         self.assertTrue(self.table_rows(out)[0].endswith("| skill SHA changed |"))
 
+    def test_a_dirty_skill_is_flagged_even_on_the_same_sha(self):
+        a = self.write("a.json", results([row("greet", "haiku", 3, 3, ALL3)]))
+        doc = results([row("greet", "haiku", 3, 3, ALL3)])
+        doc["manifest"]["revisions"]["skill"]["dirty"] = True
+        b = self.write("b.json", doc)
+        _, out, _ = run_cli("compare", str(a), str(b))
+        self.assertTrue(self.table_rows(out)[0].endswith("| skill SHA changed |"))
+
     def test_rows_in_only_one_file(self):
         a = self.write("a.json", results([row("greet", "haiku", 3, 3, ALL3)]))
         b = self.write("b.json", results([row("greet", "sonnet", 3, 3, ALL3)]))
