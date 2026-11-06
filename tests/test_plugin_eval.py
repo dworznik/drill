@@ -387,7 +387,7 @@ class HttpRouting(unittest.TestCase):
             ws = Path(tempfile.mkdtemp())
             # the scaffold's env is scrubbed, proxies and all
             subprocess.run(["bash", str(script)], cwd=ws, check=True, env={"PATH": "/usr/bin:/bin"})
-            self.assertEqual(fake.workspace, ws)
+            self.assertEqual(fake.workspace.resolve(), ws.resolve())  # macOS: $PWD is /private/var/…
 
     @unittest.skipUnless(shutil.which("node"), "needs node")
     def test_node_fetch_reaches_the_fake_through_the_node_passthrough(self):
