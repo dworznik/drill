@@ -1,6 +1,9 @@
-"""Checking one run's trace against a case's `trace-rules.json` (ADR-0008).
+"""Checking one run's trace against a case's `trace-rules.json` (ADR-0008, ADR-0014).
 
-A rules file names `calls` (matchers) and lists `rules` that use them, by name or inline.
+The trace holds shim calls {bin, argv, env, stdin, exit, fixture} and HTTP requests
+{method, url, headers, body, status, fixture}. A rules file names `calls` (matchers) and lists
+`rules` that use them, by name or inline. A matcher's fields say which kind of line it hits:
+bin/args/arg/exit only shim calls, method/url/status only requests, so `order` can mix both.
 `check` returns one verdict per rule; any fixture miss fails the run before a rule is read.
 Literals written in rules are masked as `<redacted>` in every verdict.
 """
@@ -36,8 +39,11 @@ def env_keep_list(rules: dict) -> list[str]:
     return sorted({k for r in rules.get("rules", []) if "env" in r for k in r["env"]})
 
 
-RULE_KEYS = {"order": (), "count": (), "in-stdin": ("of",), "env": ("of",), "stop-after": ()}
-MATCHER_KEYS = {"bin", "args", "arg", "exit"}
+RULE_KEYS = {"order": (), "count": (), "secret": (), "in-stdin": ("of",), "in-body": ("of",), "env": ("of",),
+             "header": ("of",), "stop-after": ()}
+SHIM_KEYS = {"bin", "args", "arg", "exit"}
+REQUEST_KEYS = {"method", "url", "status"}
+MATCHER_KEYS = SHIM_KEYS | REQUEST_KEYS
 
 
 def validate(rules: dict) -> None:
@@ -58,11 +64,16 @@ def validate(rules: dict) -> None:
             raise BadRules(f"{where}: a call is a name or a matcher, got {x!r}")
         if extra := set(x) - MATCHER_KEYS:
             raise BadRules(f"{where}: unknown matcher field(s) {sorted(extra)}")
-        if "arg" in x:
-            try:
-                re.compile(x["arg"])
-            except (re.error, TypeError) as e:
-                raise BadRules(f"{where}: bad arg regex {x['arg']!r}: {e}") from e
+        if set(x) & SHIM_KEYS and set(x) & REQUEST_KEYS:
+            raise BadRules(f"{where}: a matcher hits a shim call or a request, not both: {sorted(x)}")
+        if "method" in x and not isinstance(x["method"], str):
+            raise BadRules(f"{where}: method is a string, got {x['method']!r}")
+        for key in ("exit", "status"):
+            if key in x and (not isinstance(x[key], int) or isinstance(x[key], bool)):
+                raise BadRules(f"{where}: {key} is a number, got {x[key]!r}")
+        for key in ("arg", "url"):
+            if key in x:
+                _regex(x[key], f"{where}: bad {key} regex")
 
     for name, m in calls.items():
         matcher(m, f"call {name!r}")
@@ -73,17 +84,32 @@ def validate(rules: dict) -> None:
         for key in RULE_KEYS[kind]:
             if key not in r:
                 raise BadRules(f"rule {i + 1}: {kind} needs {key!r}")
-        targets = r["order"] if kind == "order" else [r[kind] if kind in ("count", "stop-after") else r["of"]]
+        targets = (r["order"] if kind == "order" else [] if kind == "secret"
+                   else [r[kind] if kind in ("count", "stop-after") else r["of"]])
         if kind == "order" and not isinstance(targets, list):
             raise BadRules(f"rule {i + 1}: order takes a list of calls")
         for t in targets:
             matcher(t, f"rule {i + 1}")
-        if kind == "env" and not isinstance(r["env"], dict):
-            raise BadRules(f"rule {i + 1}: env takes an object of NAME: value|null")
+        if kind in ("env", "header") and not isinstance(r[kind], dict):
+            raise BadRules(f"rule {i + 1}: {kind} takes an object of NAME: value|null")
+        if kind == "header":
+            for v in r["header"].values():
+                if v is not None:
+                    _regex(v, f"rule {i + 1}: bad header regex")
+        if kind in ("secret", "in-stdin", "in-body") and not (isinstance(r[kind], str) and r[kind]):
+            raise BadRules(f"rule {i + 1}: {kind} takes a non-empty literal")
+
+
+def _regex(pattern, why: str) -> None:
+    try:
+        re.compile(pattern)
+    except (re.error, TypeError) as e:
+        raise BadRules(f"{why} {pattern!r}: {e}") from e
 
 
 def _literals(rules: dict) -> list[str]:
-    return [r[k] for r in rules.get("rules", []) for k in ("in-stdin", "secret") if isinstance(r.get(k), str) and r[k]]
+    return [r[k] for r in rules.get("rules", []) for k in ("in-stdin", "in-body", "secret")
+            if isinstance(r.get(k), str) and r[k]]
 
 
 def _subseq(want, have) -> bool:
@@ -91,7 +117,18 @@ def _subseq(want, have) -> bool:
     return all(any(w == h for h in it) for w in want)
 
 
+def _is_request(c: dict) -> bool:
+    return "method" in c
+
+
 def _hit(m: dict, c: dict) -> bool:
+    if set(m) & REQUEST_KEYS:
+        return (_is_request(c)
+                and ("method" not in m or m["method"].upper() == c.get("method"))
+                and ("status" not in m or m["status"] == c.get("status"))
+                and ("url" not in m or re.search(m["url"], c.get("url") or "") is not None))
+    if set(m) & SHIM_KEYS and _is_request(c):
+        return False
     argv = c.get("argv") or []
     return (("bin" not in m or m["bin"] == c.get("bin"))
             and ("exit" not in m or m["exit"] == c.get("exit"))
@@ -99,8 +136,19 @@ def _hit(m: dict, c: dict) -> bool:
             and ("args" not in m or _subseq(m["args"], argv)))
 
 
+def _show(c: dict) -> str:
+    if _is_request(c):
+        return f"{c.get('method')} {c.get('url')}"
+    return " ".join([c.get("bin", "?"), *(c.get("argv") or [])])
+
+
 def _lines(xs) -> str:
     return "line " + ", ".join(str(x["line"]) for x in xs) if xs else "none"
+
+
+def _text(value) -> str:
+    """A stdin or body as text; a body that wasn't UTF-8 is traced as {"base64": …} and holds no literal."""
+    return value if isinstance(value, str) else ""
 
 
 def check(rules: dict, trace: list[dict]) -> list[Verdict]:
@@ -114,7 +162,7 @@ def check(rules: dict, trace: list[dict]) -> list[Verdict]:
 
     misses = [c for c in trace if "fixture" in c and c["fixture"] is None]
     if misses:
-        why = "; ".join(f"line {c['line']}: {' '.join([c.get('bin', '?'), *(c.get('argv') or [])])}" for c in misses)
+        why = "; ".join(f"line {c['line']}: {_show(c)}" for c in misses)
         return [Verdict(None, False, "no fixture misses", mask(why))]
     validate(rules)
 
@@ -153,10 +201,18 @@ def check(rules: dict, trace: list[dict]) -> list[Verdict]:
             ok = len(xs) >= lo and (hi is None or len(xs) <= hi)
             v = Verdict(i, ok, f"count {name(r['count'])} in {lo}..{'∞' if hi is None else hi}",
                         f"{len(xs)} call(s): {_lines(xs)}")
-        elif "in-stdin" in r:
+        elif "secret" in r:
+            # argv and request URLs only: stdin, bodies and headers are a secret's proper channels (ADR-0014).
+            # The transcript half (what the agent wrote) is #29's.
+            lit = r["secret"]
+            where = [f"{'URL' if _is_request(c) else 'argv'} on {_lines([c])}" for c in trace
+                     if (lit in (c.get("url") or "") if _is_request(c) else any(lit in a for a in c.get("argv") or []))]
+            v = Verdict(i, not where, f"secret <{label}>", "; ".join(where))
+        elif "in-stdin" in r or "in-body" in r:
+            key, field = ("in-stdin", "stdin") if "in-stdin" in r else ("in-body", "body")
             xs = of(r["of"])
-            bad = [c for c in xs if r["in-stdin"] not in (c.get("stdin") or "")]
-            v = Verdict(i, bool(xs) and not bad, f"in-stdin <{label}> of {name(r['of'])}",
+            bad = [c for c in xs if r[key] not in _text(c.get(field))]
+            v = Verdict(i, bool(xs) and not bad, f"{key} <{label}> of {name(r['of'])}",
                         f"no {name(r['of'])} call" if not xs else f"missing on {_lines(bad)}")
         elif "env" in r:
             xs = of(r["of"])
@@ -164,6 +220,17 @@ def check(rules: dict, trace: list[dict]) -> list[Verdict]:
             bad = [c for c in xs if any(k not in (c.get("env") or {}) if want is None
                                         else (c.get("env") or {}).get(k) != want for k, want in env.items())]
             what = "env " + " ".join(f"{k}={'*' if w is None else w}" for k, w in env.items())
+            v = Verdict(i, not bad, f"{what} on {name(r['of'])}", f"{len(xs)} call(s), wrong on {_lines(bad)}")
+        elif "header" in r:
+            xs = of(r["of"])
+            want = {k.lower(): w for k, w in r["header"].items()}
+
+            def wrong(c) -> bool:
+                have = c.get("headers") or {}
+                return any(k not in have or (w is not None and re.search(w, str(have[k])) is None)
+                           for k, w in want.items())
+            bad = [c for c in xs if wrong(c)]
+            what = "header " + " ".join(f"{k}={'*' if w is None else w}" for k, w in want.items())
             v = Verdict(i, not bad, f"{what} on {name(r['of'])}", f"{len(xs)} call(s), wrong on {_lines(bad)}")
         elif "stop-after" in r:
             first = next((c["line"] for c in of(r["stop-after"])), None)
