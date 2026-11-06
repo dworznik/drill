@@ -1,0 +1,5 @@
+[
+  {"argv": ["params", "--network", "garden-sepolia", "--json"], "stdout": {"chainId": 11155111}},
+  {"argv": ["account", "sign", "--account", "agent-1", "--message-file", "-", "--json"], "stdout": {"signature": "0xabc123"}},
+  {"argv": ["balance", "--account", "agent-1", "--network", "garden-sepolia", "--json"], "stdout": {"wei": "50000000000000000"}}
+]

@@ -1,0 +1,126 @@
+drill-http: listening on 127.0.0.1:18080
+===== good-curl
+  agent| poll: queued
+  agent| poll: sent
+  agent| poll: funded
+  agent| {"wei": "50000000000000000"}
+--- trace
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme","headers":{"user-agent":"curl/8.5.0","accept":"*/*"},"body":null,"status":200,"fixture":0}
+  {"bin":"rln","argv":["params","--network","garden-sepolia","--json"],"env":{"RLN_AGENT":"1"},"stdin":null,"exit":0,"fixture":0}
+  {"method":"POST","url":"https://testnet.garden/api/v1/acme/claims","headers":{"user-agent":"curl/8.5.0","accept":"*/*","content-type":"application/json"},"body":"{\"secret\":\"7Qm2XkP9fLr4TzWc8NbVh3\",\"recipient\":\"0x1111111111111111111111111111111111111111\"}","status":201,"fixture":1}
+  {"bin":"rln","argv":["account","sign","--account","agent-1","--message-file","-","--json"],"env":{"RLN_AGENT":"1"},"stdin":"testnet.garden claim clm_01 for 0x1111111111111111111111111111111111111111","exit":0,"fixture":1}
+  {"method":"POST","url":"https://testnet.garden/api/v1/acme/claims/clm_01/signature","headers":{"user-agent":"curl/8.5.0","accept":"*/*","content-type":"application/json"},"body":"{\"signature\":\"0xabc123\"}","status":202,"fixture":2}
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme/claims/clm_01","headers":{"user-agent":"curl/8.5.0","accept":"*/*"},"body":null,"status":200,"fixture":3}
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme/claims/clm_01","headers":{"user-agent":"curl/8.5.0","accept":"*/*"},"body":null,"status":200,"fixture":4}
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme/claims/clm_01","headers":{"user-agent":"curl/8.5.0","accept":"*/*"},"body":null,"status":200,"fixture":5}
+  {"bin":"rln","argv":["balance","--account","agent-1","--network","garden-sepolia","--json"],"env":{"RLN_AGENT":"1"},"stdin":null,"exit":0,"fixture":2}
+--- trace-assert
+  ok   every call answered by a fixture
+  ok   order: tenant → params → start → sign → finish → poll → balance
+  ok   count start in 1..1  (1 call(s): line 3)
+  ok   count poll in 1..25  (3 call(s): line 6, 7, 8)
+  ok   count elsewhere in 0..0  (0 call(s): none)
+  ok   secret <link secret> not in argv or URL
+  ok   in-body <link secret> of start  (missing on none)
+  ok   header content-type=^application/json on start  (1 call(s), wrong on none)
+  ok   env RLN_AGENT=1 on rln  (3 call(s), wrong on none)
+  ok   stop-after {"bin": "rln", "exit": 3}  (never happened)
+===== good-python
+  agent| {"wei": "50000000000000000"}
+  agent| 
+--- trace
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme","headers":{"accept-encoding":"identity","user-agent":"Python-urllib/3.13"},"body":null,"status":200,"fixture":0}
+  {"bin":"rln","argv":["params","--network","garden-sepolia","--json"],"env":{"RLN_AGENT":"1"},"stdin":null,"exit":0,"fixture":0}
+  {"method":"POST","url":"https://testnet.garden/api/v1/acme/claims","headers":{"accept-encoding":"identity","user-agent":"Python-urllib/3.13","content-type":"application/json"},"body":"{\"secret\": \"7Qm2XkP9fLr4TzWc8NbVh3\", \"recipient\": \"0x1111111111111111111111111111111111111111\"}","status":201,"fixture":1}
+  {"bin":"rln","argv":["account","sign","--account","agent-1","--message-file","-","--json"],"env":{"RLN_AGENT":"1"},"stdin":"testnet.garden claim clm_01 for 0x1111111111111111111111111111111111111111","exit":0,"fixture":1}
+  {"method":"POST","url":"https://testnet.garden/api/v1/acme/claims/clm_01/signature","headers":{"accept-encoding":"identity","user-agent":"Python-urllib/3.13","content-type":"application/json"},"body":"{\"signature\": \"0xabc123\"}","status":202,"fixture":2}
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme/claims/clm_01","headers":{"accept-encoding":"identity","user-agent":"Python-urllib/3.13"},"body":null,"status":200,"fixture":3}
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme/claims/clm_01","headers":{"accept-encoding":"identity","user-agent":"Python-urllib/3.13"},"body":null,"status":200,"fixture":4}
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme/claims/clm_01","headers":{"accept-encoding":"identity","user-agent":"Python-urllib/3.13"},"body":null,"status":200,"fixture":5}
+  {"bin":"rln","argv":["balance","--account","agent-1","--network","garden-sepolia","--json"],"env":{"RLN_AGENT":"1"},"stdin":null,"exit":0,"fixture":2}
+--- trace-assert
+  ok   every call answered by a fixture
+  ok   order: tenant → params → start → sign → finish → poll → balance
+  ok   count start in 1..1  (1 call(s): line 3)
+  ok   count poll in 1..25  (3 call(s): line 6, 7, 8)
+  ok   count elsewhere in 0..0  (0 call(s): none)
+  ok   secret <link secret> not in argv or URL
+  ok   in-body <link secret> of start  (missing on none)
+  ok   header content-type=^application/json on start  (1 call(s), wrong on none)
+  ok   env RLN_AGENT=1 on rln  (3 call(s), wrong on none)
+  ok   stop-after {"bin": "rln", "exit": 3}  (never happened)
+===== good-node
+  agent| (node:824) [UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental, expect them to change at any time.
+  agent| (Use `node --trace-warnings ...` to show where the warning was created)
+  agent| node got { tenant: 'acme', network: 'garden-sepolia', drip: '0.05' }
+--- trace
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme","headers":{"accept":"*/*","accept-language":"*","sec-fetch-mode":"cors","user-agent":"node","accept-encoding":"br, gzip, deflate"},"body":null,"status":200,"fixture":0}
+--- trace-assert
+  ok   every call answered by a fixture
+  FAIL order: tenant → params → start → sign → finish → poll → balance  (no params after tenant)
+  FAIL count start in 1..1  (0 call(s): none)
+  FAIL count poll in 1..25  (0 call(s): none)
+  ok   count elsewhere in 0..0  (0 call(s): none)
+  ok   secret <link secret> not in argv or URL
+  FAIL in-body <link secret> of start  (no start call)
+  ok   header content-type=^application/json on start  (0 call(s), wrong on none)
+  ok   env RLN_AGENT=1 on rln  (0 call(s), wrong on none)
+  ok   stop-after {"bin": "rln", "exit": 3}  (never happened)
+===== secret-in-url
+--- trace
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme","headers":{"user-agent":"curl/8.5.0","accept":"*/*"},"body":null,"status":200,"fixture":0}
+  {"bin":"rln","argv":["params","--network","garden-sepolia","--json"],"env":{"RLN_AGENT":"1"},"stdin":null,"exit":0,"fixture":0}
+  {"method":"POST","url":"https://testnet.garden/api/v1/acme/claims?secret=7Qm2XkP9fLr4TzWc8NbVh3","headers":{"user-agent":"curl/8.5.0","accept":"*/*"},"body":null,"status":502,"fixture":null}
+--- trace-assert
+  FAIL every call answered by a fixture  (line 3: POST https://testnet.garden/api/v1/acme/claims?secret=7Qm2XkP9fLr4TzWc8NbVh3)
+  FAIL order: tenant → params → start → sign → finish → poll → balance  (no start after params)
+  FAIL count start in 1..1  (0 call(s): none)
+  FAIL count poll in 1..25  (0 call(s): none)
+  ok   count elsewhere in 0..0  (0 call(s): none)
+  FAIL secret <link secret> not in argv or URL  (line 3: POST https://testnet.garden/api/v1/acme/claims?secret=<redacted>)
+  FAIL in-body <link secret> of start  (no start call)
+  ok   header content-type=^application/json on start  (0 call(s), wrong on none)
+  ok   env RLN_AGENT=1 on rln  (1 call(s), wrong on none)
+  ok   stop-after {"bin": "rln", "exit": 3}  (never happened)
+===== unfaked-path
+  agent| HTTP/1.1 200 Connection Established
+  agent| Server: BaseHTTP/0.6 Python/3.13.18
+  agent| Date: Fri, 06 Nov 2026 08:42:43 GMT
+  agent| 
+  agent| HTTP/1.1 502 Bad Gateway
+  agent| Server: BaseHTTP/0.6 Python/3.13.18
+  agent| Date: Fri, 06 Nov 2026 08:42:43 GMT
+  agent| x-drill-fixture: miss
+  agent| content-type: text/plain
+  agent| content-length: 74
+  agent| 
+  agent| drill-http: no fixture for: GET https://testnet.garden/api/v1/acme/health
+--- trace
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme/health","headers":{"user-agent":"curl/8.5.0","accept":"*/*"},"body":null,"status":502,"fixture":null}
+--- trace-assert
+  FAIL every call answered by a fixture  (line 1: GET https://testnet.garden/api/v1/acme/health)
+  FAIL order: tenant → params → start → sign → finish → poll → balance  (no tenant after the start)
+  FAIL count start in 1..1  (0 call(s): none)
+  FAIL count poll in 1..25  (0 call(s): none)
+  ok   count elsewhere in 0..0  (0 call(s): none)
+  ok   secret <link secret> not in argv or URL
+  FAIL in-body <link secret> of start  (no start call)
+  ok   header content-type=^application/json on start  (0 call(s), wrong on none)
+  ok   env RLN_AGENT=1 on rln  (0 call(s), wrong on none)
+  ok   stop-after {"bin": "rln", "exit": 3}  (never happened)
+===== no-content-type
+--- trace
+  {"method":"GET","url":"https://testnet.garden/api/v1/acme","headers":{"user-agent":"curl/8.5.0","accept":"*/*"},"body":null,"status":200,"fixture":0}
+  {"bin":"rln","argv":["params","--network","garden-sepolia","--json"],"env":{"RLN_AGENT":"1"},"stdin":null,"exit":0,"fixture":0}
+  {"method":"POST","url":"https://testnet.garden/api/v1/acme/claims","headers":{"user-agent":"curl/8.5.0","accept":"*/*","content-type":"application/x-www-form-urlencoded"},"body":"{\"secret\":\"7Qm2XkP9fLr4TzWc8NbVh3\",\"recipient\":\"0x1111111111111111111111111111111111111111\"}","status":201,"fixture":1}
+--- trace-assert
+  ok   every call answered by a fixture
+  FAIL order: tenant → params → start → sign → finish → poll → balance  (no sign after start)
+  ok   count start in 1..1  (1 call(s): line 3)
+  FAIL count poll in 1..25  (0 call(s): none)
+  ok   count elsewhere in 0..0  (0 call(s): none)
+  ok   secret <link secret> not in argv or URL
+  ok   in-body <link secret> of start  (missing on none)
+  FAIL header content-type=^application/json on start  (1 call(s), wrong on line 3)
+  ok   env RLN_AGENT=1 on rln  (1 call(s), wrong on none)
+  ok   stop-after {"bin": "rln", "exit": 3}  (never happened)

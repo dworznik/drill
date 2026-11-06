@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+# the same skill, followed with urllib: a client a curl shim would never see
+import json, os, subprocess, urllib.request as u
+O = "https://testnet.garden/api/v1/acme"; env = dict(os.environ, RLN_AGENT="1")
+def call(url, data=None):
+    req = u.Request(url, data=json.dumps(data).encode() if data else None,
+                    headers={"Content-Type": "application/json"} if data else {})
+    return json.load(u.urlopen(req))
+call(O)
+subprocess.run(["rln", "params", "--network", "garden-sepolia", "--json"], env=env, check=True, capture_output=True)
+c = call(O + "/claims", {"secret": os.environ["SECRET"], "recipient": "0x" + "1" * 40})
+sig = json.loads(subprocess.run(["rln", "account", "sign", "--account", "agent-1", "--message-file", "-", "--json"],
+                                input=c["message"], text=True, env=env, check=True, capture_output=True).stdout)["signature"]
+call(f"{O}/claims/{c['id']}/signature", {"signature": sig})
+while call(f"{O}/claims/{c['id']}")["status"] != "funded":
+    pass
+print(subprocess.run(["rln", "balance", "--account", "agent-1", "--network", "garden-sepolia", "--json"], env=env, capture_output=True, text=True).stdout)

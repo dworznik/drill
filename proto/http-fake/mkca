@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# PROTOTYPE (drill#21): a throwaway drill CA plus one leaf cert per faked host.
+# usage: mkca <out-dir> <host>...   (needs the openssl CLI; Python's stdlib can't mint certs)
+set -euo pipefail
+out=$1; shift
+mkdir -p "$out"; cd "$out"
+[[ -f ca.key ]] || openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=drill throwaway CA" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "subjectKeyIdentifier=hash" -keyout ca.key -out ca.pem 2>/dev/null
+# Python 3.13's default context is X509-strict: without keyUsage on the CA and
+# authorityKeyIdentifier on the leaf, urllib refuses the chain (curl and node don't care).
+for h in "$@"; do
+    printf 'subjectAltName=DNS:%s\nbasicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nauthorityKeyIdentifier=keyid\nsubjectKeyIdentifier=hash\n' "$h" > "$h.ext"
+    openssl req -newkey rsa:2048 -nodes -subj "/CN=$h" -keyout "$h.key" -out "$h.csr" 2>/dev/null
+    openssl x509 -req -in "$h.csr" -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 -extfile "$h.ext" -out "$h.pem" 2>/dev/null
+    rm "$h.csr" "$h.ext"
+done

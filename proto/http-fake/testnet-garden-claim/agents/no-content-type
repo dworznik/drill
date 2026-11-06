@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# posts the claim body without content-type (curl --data defaults to form-urlencoded)
+set -eu; O=https://testnet.garden/api/v1/acme
+curl -sS "$O" >/dev/null; RLN_AGENT=1 rln params --network garden-sepolia --json >/dev/null
+printf '{"secret":"%s","recipient":"0x%s"}' "$SECRET" 1111111111111111111111111111111111111111 | curl -sS -o /dev/null --data @- "$O/claims"

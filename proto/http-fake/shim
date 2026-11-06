@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""PROTOTYPE (drill#21): minimal Python port of the #7 shim, only so the claim
+rig's `rln` lines land in the same trace as the HTTP fake's lines.
+Symlink it as bin/<name>; it finds the workspace by walking up to .drill/."""
+import fnmatch, json, os, stat, sys
+
+bin_ = os.path.basename(sys.argv[0])
+argv = sys.argv[1:]
+d = os.getcwd()
+while d != "/" and not os.path.isdir(os.path.join(d, ".drill")):
+    d = os.path.dirname(d)
+drill = os.path.join(d, ".drill")
+if not os.path.isdir(drill):
+    sys.exit(f"drill-shim: {bin_} called outside a drill workspace")
+mode = os.fstat(0).st_mode
+stdin = sys.stdin.read() if (stat.S_ISFIFO(mode) or stat.S_ISREG(mode)) else ""
+keep = json.load(open(os.path.join(drill, "env-keep.json"))) if os.path.exists(os.path.join(drill, "env-keep.json")) else []
+env = {k: os.environ[k] for k in keep if k in os.environ}
+fx_path = os.path.join(drill, "fixtures", bin_ + ".json")
+fx = json.load(open(fx_path)) if os.path.exists(fx_path) else []
+hits = [i for i, f in enumerate(fx) if len(f["argv"]) == len(argv)
+        and all(fnmatch.fnmatchcase(a, p) for a, p in zip(argv, f["argv"]))]
+pick = None
+if hits:
+    seq = [i for i in hits if fx[i]["argv"] == fx[hits[0]]["argv"]]
+    tp = os.path.join(drill, "trace.jsonl")
+    prior = sum(1 for l in (open(tp) if os.path.exists(tp) else []) if l.strip()
+                and (lambda t: t.get("bin") == bin_ and t.get("argv") == argv)(json.loads(l)))
+    pick = seq[min(prior, len(seq) - 1)]
+f = fx[pick] if pick is not None else {"stderr": f"drill-shim: no fixture for: {bin_} {' '.join(argv)}\n", "exit": 127}
+line = {"bin": bin_, "argv": argv, "env": env, "stdin": stdin or None, "exit": f.get("exit", 0), "fixture": pick}
+with open(os.path.join(drill, "trace.jsonl"), "a") as t:
+    t.write(json.dumps(line, separators=(",", ":")) + "\n")
+out = f.get("stdout", "")
+sys.stdout.write(out if isinstance(out, str) else json.dumps(out) + "\n")
+sys.stderr.write(f.get("stderr", ""))
+sys.exit(f.get("exit", 0))
