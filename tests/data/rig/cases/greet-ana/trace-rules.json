@@ -1,0 +1,6 @@
+{
+  "calls": {"greet": {"bin": "greet", "args": ["--name", "Ana"]}},
+  "rules": [
+    {"count": "greet", "min": 1, "max": 1}
+  ]
+}

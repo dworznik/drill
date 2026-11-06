@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from drill.lib.shim import install_shims
+from drill.lib.shim import install_shims, shim_python
 
 DATA = Path(__file__).parent / "data" / "shim"
 
@@ -162,6 +162,29 @@ class Shim(unittest.TestCase):
     def test_a_json_py_in_the_workspace_is_not_imported(self):
         (self.ws / "json.py").write_text("raise SystemExit(9)\n")
         self.assertEqual(self.gh("auth", "status").returncode, 0)
+
+
+class ShimPython(unittest.TestCase):
+    """plugin eval's sandbox denies reads under $HOME, where pyenv and uv keep their Pythons."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp()).resolve()
+        self.home = self.root / "home"
+        for d in ("home/.pyenv/bin", "opt/bin"):
+            (self.root / d).mkdir(parents=True)
+            py = self.root / d / "python3"
+            py.write_text("#!/bin/sh\n")
+            py.chmod(0o755)
+
+    def test_an_interpreter_under_home_is_passed_over(self):
+        inside, outside = self.home / ".pyenv/bin/python3", self.root / "opt/bin/python3"
+        self.assertEqual(shim_python([str(inside), str(outside)], home=str(self.home)), str(outside))
+
+    def test_a_symlink_out_of_home_is_judged_by_its_target(self):
+        link = self.root / "opt/bin/python"
+        link.symlink_to(self.home / ".pyenv/bin/python3")
+        outside = self.root / "opt/bin/python3"
+        self.assertEqual(shim_python([str(link), str(outside)], home=str(self.home)), str(outside))
 
 
 if __name__ == "__main__":
