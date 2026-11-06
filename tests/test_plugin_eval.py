@@ -17,6 +17,8 @@ from drill.cases import load_cases
 from drill.drill import drill, run_root, run_status
 from drill.lib.trace_rules import Verdict
 from drill.rig import Refusal, load_rig
+from drill.lib.http_fake import HttpFake, install_node_passthrough, register, run_env
+from drill.lib.shim import shim_python
 from drill.runners.plugin_eval import SCAFFOLD, Model, prepare, scaffold_text, with_scaffold
 
 DATA = Path(__file__).parent / "data"
@@ -301,6 +303,119 @@ class RunLayout(unittest.TestCase):
             drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("haiku", {})],
                   log=lambda *_: None, root=Path(tempfile.mkdtemp()))
         self.assertFalse(seen["bin"].is_relative_to(seen["env"]))
+
+
+REAL_RUN = subprocess.run
+
+
+def stop_plugin_eval(seen: dict):
+    """A subprocess.run that records plugin eval's command and env and stops there, running anything else (openssl)."""
+    def run(cmd, *args, env=None, **kw):
+        if cmd[1:3] != ["plugin", "eval"]:
+            return REAL_RUN(cmd, *args, env=env, **kw)
+        node = Path(env["PATH"].split(os.pathsep)[0]) / "node"
+        seen.update(cmd=cmd, env=env, bundle=Path(env["SSL_CERT_FILE"]).read_text() if "SSL_CERT_FILE" in env else None,
+                    node=("symlink" if node.is_symlink() else node.read_text()) if os.path.lexists(node) else None)
+        raise OSError("stop")
+    return mock.patch("drill.runners.plugin_eval.subprocess.run", run)
+
+
+class HttpRouting(unittest.TestCase):
+    """What drill hands plugin eval for a rig with hosts, without a live run."""
+
+    def capture(self, rig_dir: Path, env=None):
+        seen = {}
+        rig = load_rig(rig_dir)
+        with mock.patch.dict(os.environ, env or {}), stop_plugin_eval(seen):
+            drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("haiku", {})],
+                  log=lambda *_: None, root=Path(tempfile.mkdtemp()))
+        return seen
+
+    def http_rig(self) -> Path:
+        rig = Path(tempfile.mkdtemp()) / "pets"
+        shutil.copytree(DATA / "http-rig", rig)
+        return rig
+
+    def test_a_rig_without_hosts_runs_no_fake(self):
+        seen = self.capture(copy_rig())
+        for var in ("HTTPS_PROXY", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"):
+            self.assertEqual(seen["env"].get(var), os.environ.get(var), var)
+        self.assertEqual(seen["cmd"][seen["cmd"].index("--allow-tools") + 1:], ["Bash"])
+
+    def test_the_rig_hosts_are_granted_and_the_run_is_serial(self):
+        cmd = self.capture(self.http_rig())["cmd"]
+        self.assertEqual(cmd[cmd.index("--allow-tools") + 1:], ["Bash", "WebFetch(domain:pets.drill.test)"])
+        self.assertEqual(cmd[cmd.index("--concurrency") + 1], "1")
+
+    def test_proxies_point_at_the_fake_and_every_client_trusts_one_bundle(self):
+        user_ca = Path(tempfile.mkdtemp()) / "corp.pem"
+        user_ca.write_text("-----BEGIN CERTIFICATE-----\nY29ycA==\n-----END CERTIFICATE-----\n")
+        env = self.capture(self.http_rig(), {"SSL_CERT_FILE": str(user_ca)})["env"]
+        proxies = {env[v] for v in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")}
+        self.assertEqual(len(proxies), 1)
+        self.assertRegex(proxies.pop(), r"^http://127\.0\.0\.1:\d+$")
+        bundles = {env[v] for v in ("SSL_CERT_FILE", "CURL_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS")}
+        self.assertEqual(len(bundles), 1)
+        self.assertEqual(Path(bundles.pop()).name, "ca-bundle.pem")
+
+    def test_nothing_the_run_reads_is_under_tmp(self):
+        """With TMPDIR unset or under /tmp, the bundle, shims and TMPDIR all go in the user cache instead."""
+        rig = self.http_rig()
+        seen = {}
+        with mock.patch.dict(os.environ, {"TMPDIR": "/tmp"}), stop_plugin_eval(seen):
+            drill(load_rig(rig), load_cases(rig / "cases"), skill_copy(), {}, [Model("haiku", {})], log=lambda *_: None)
+        env = seen["env"]
+        for p in (env["SSL_CERT_FILE"], env["TMPDIR"], env["CLAUDE_ENV_FILE"], env["PATH"].split(os.pathsep)[0]):
+            self.assertFalse(Path(p).resolve().is_relative_to(Path("/tmp").resolve()), p)
+        self.assertIn("drill throwaway CA", seen["bundle"])
+
+    def test_the_bundle_keeps_the_users_cas(self):
+        user_ca = Path(tempfile.mkdtemp()) / "corp.pem"
+        user_ca.write_text("-----BEGIN CERTIFICATE-----\nY29ycA==\n-----END CERTIFICATE-----\n")
+        seen = {}
+        rig = load_rig(self.http_rig())
+        with mock.patch.dict(os.environ, {"SSL_CERT_FILE": str(user_ca)}), stop_plugin_eval(seen):
+            drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("haiku", {})],
+                  log=lambda *_: None, root=Path(tempfile.mkdtemp()))
+        self.assertIn("Y29ycA==", seen["bundle"])
+        self.assertIn("drill throwaway CA", seen["bundle"])
+
+    def test_the_scaffold_registers_its_workspace_with_the_fake(self):
+        with HttpFake(Path(tempfile.mkdtemp()), ["pets.drill.test"]) as fake:
+            script = Path(tempfile.mkdtemp()) / SCAFFOLD
+            script.write_text(scaffold_text(DATA / "http-rig" / "cases" / "adopt-rex", [], (shim_python(), fake.url)))
+            ws = Path(tempfile.mkdtemp())
+            # the scaffold's env is scrubbed, proxies and all
+            subprocess.run(["bash", str(script)], cwd=ws, check=True, env={"PATH": "/usr/bin:/bin"})
+            self.assertEqual(fake.workspace, ws)
+
+    @unittest.skipUnless(shutil.which("node"), "needs node")
+    def test_node_fetch_reaches_the_fake_through_the_node_passthrough(self):
+        run_dir = Path(tempfile.mkdtemp())
+        with HttpFake(run_dir / "ca", ["pets.drill.test"]) as fake:
+            bin_dir = run_dir / "bin"
+            self.assertIsNotNone(install_node_passthrough(bin_dir, shim_python()))
+            ws = run_dir / "ws"
+            shutil.copytree(DATA / "http-rig" / "cases" / "adopt-rex" / "fixtures", ws / ".drill" / "fixtures")
+            register(fake.url, ws)
+            env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower() and k != "NODE_USE_ENV_PROXY"}
+            env.update(run_env(fake, fake.ca), PATH=f"{bin_dir}{os.pathsep}{env['PATH']}")
+            out = subprocess.run(["node", "-e", 'fetch("https://pets.drill.test/v1/adoptions/adp_01")'
+                                  '.then(r => r.json()).then(j => console.log(j.status))'],
+                                 cwd=ws, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(out.stdout.strip(), "adopted", out.stderr)
+            trace = [json.loads(t) for t in (ws / ".drill" / "trace.jsonl").read_text().splitlines()]
+            self.assertEqual([(t["method"], t["fixture"]) for t in trace], [("GET", 1)])
+
+    def test_a_rig_that_shims_node_keeps_its_fixture_shim(self):
+        rig = self.http_rig()
+        config = json.loads((rig / "rig.json").read_text())
+        (rig / "rig.json").write_text(json.dumps(dict(config, shims=["node"])))
+        self.assertEqual(self.capture(rig)["node"], "symlink", "the fixture shim is a symlink to .drill-shim")
+
+    @unittest.skipUnless(shutil.which("node"), "needs node")
+    def test_a_rig_with_hosts_gets_the_node_passthrough(self):
+        self.assertIn('os.environ["NODE_USE_ENV_PROXY"] = "1"', self.capture(self.http_rig())["node"])
 
 
 if __name__ == "__main__":
