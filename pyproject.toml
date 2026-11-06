@@ -1,0 +1,17 @@
+[project]
+name = "drill"
+version = "0.1.0"
+description = "Drill agent skills: fake their tools, run them through a runner, check what they did."
+requires-python = ">=3.12"
+dependencies = []
+license = "MIT"
+
+[project.scripts]
+drill = "drill.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
