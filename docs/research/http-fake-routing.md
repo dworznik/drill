@@ -278,3 +278,27 @@ config, so the inferences above can be checked against it.
 3. Append the drill CA to the user's existing bundle rather than replacing it: `claude` itself reads `NODE_EXTRA_CA_CERTS`, and the parent proxy must tunnel the model API and telemetry hosts upstream untouched (the probe's fake forwarded `code.claude.com` and Datadog CONNECTs to the previous proxy; on a machine with no prior proxy it dials direct).
 
 Probe to finish on macOS (same kit): confirm the HTTPS CONNECT reaches the fake, read the CA vars the child sees with nothing pre-set on the host, and check whether a file written to `/tmp` in one Bash call is there in the next.
+
+## Probe run (2026-11-06, macOS 15.7.8, Claude Code 2.1.319)
+
+Same kit on Patryk's Mac, work dir `~/drill-probe` (outside `/tmp`), no prior proxy on the host so the fake tunnelled `api.anthropic.com` and telemetry direct; `claude` reached the API through it with no `NO_PROXY`. Two runs, both 1.0 at $0.00 in ~5 s. **The route works: every open item above is settled.**
+
+| Question | Result |
+| :- | :- |
+| HTTPS CONNECT reaches the fake | **Yes.** `curl` (200, `via: connect`), Python `urllib` (200), `node` with `NODE_USE_ENV_PROXY=1` (200), `curl -o` (200, then exit 23 on the `/tmp` write). Plain `http://` also (`via: absolute`). The Linux 502 was that container's MITM hop, not the route |
+| `node fetch` as inherited | `ENOTFOUND`: dials direct. Needs `NODE_USE_ENV_PROXY=1`, which the env allowlist drops, so drill sets it from a `node` shim |
+| CA vars pass the allowlist | **Yes, with the host-set value:** `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS` all arrived as `/Users/patryk/drill-probe/ca/bundle.pem`. Dropped: `NODE_USE_ENV_PROXY`, `GIT_SSL_CAINFO`, `DRILL_MARKER`. `EVAL_MARKER` from the case arrived |
+| CA file readable | **Yes, from anywhere:** the sandbox adds the path named by the CA vars to `allowRead` on its own (`//Users/patryk/drill-probe/ca/bundle.pem`), even though `~/drill-probe` is in `denyRead`. The workspace copy is readable too |
+| Ungranted host | `curl: (56) CONNECT tunnel failed, response 403`; plain `403` + `X-Proxy-Error: blocked-by-allowlist`; `<sandbox_violations> deny network-outbound example.com:443` in the tool result; direct IP `(7)` in 1 ms |
+| Writes | workspace (`<run>/home/cwd`) and `$TMPDIR` (`<run>/tmp/claude-501`) **ok**; `/tmp` and `/opt` **fail** (`Operation not permitted`). On macOS `/tmp` and `/private/tmp` are in `denyRead` as well, so a second Bash call cannot even `ls /tmp`: the persistence question is moot. **`curl -o /tmp/testnet-garden-claim.json` fails** (`(23) Failure writing output`); the skill must write to the workspace or `$TMPDIR` |
+| Run dir | `/private/tmp/e-XXXX`; `allowWrite` is only `<run>/home` and `<run>/tmp`; the host's `/var/folders/…/T` is `denyRead` |
+| Scaffold env | `HOME` is the run's home during the scaffold, so a scaffold that references `$HOME` breaks; drill's scaffold must use absolute paths |
+
+Full `sandbox` block of the run's `config/settings.json`: `network.allowedDomains: ["testnet.garden"]`; `allowRead` = run home, run tmp, the plugin dir, every host `PATH` entry, and the CA file; `denyRead` = `/Users`, `/tmp`, `/private/tmp`, `/var/tmp`, the host `TMPDIR`, secrets dirs, the eval dir and the run's `config/` and `out/`; 226 env-var credential denies that include every proxy variable (they are rewritten per command, as on Linux).
+
+### Settled recommendation for the prototype
+
+1. `lib/` HTTP fake = CONNECT proxy with a drill CA, started by `drill run`; `HTTPS_PROXY`/`HTTP_PROXY` point at it, the CA bundle (drill CA + user's existing bundle, so `claude`'s own TLS keeps working) goes in the four CA vars, hosts come from the rig and are granted with `WebFetch(domain:…)`. CONNECTs for hosts not in the rig are tunnelled upstream (previous `HTTPS_PROXY` or direct); the sandbox allowlist is what keeps the agent off them.
+2. A `node` shim on the prepended `PATH` that execs the real `node` with `NODE_USE_ENV_PROXY=1`.
+3. The CA file can live in drill's cache dir; the sandbox makes it readable. The scaffold uses absolute paths.
+4. `testnet-garden-claim` must stop writing to `/tmp` (use `$TMPDIR` or the workspace): a fact for the testnet.garden map, and a thing drill's rig will catch.
