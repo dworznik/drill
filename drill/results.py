@@ -6,8 +6,11 @@ left out of n. plugin eval's own scores and deltas stay in the raw evidence.
 """
 
 import hashlib
+import json
 import math
 from pathlib import Path
+
+from drill.rig import Refusal
 
 Z95 = 1.959963984540054
 STATUSES = ("pass", "flaky", "fail", "error")
@@ -85,3 +88,31 @@ def all_runs(doc: dict) -> list[dict]:
     """Every run in a results file, flat, each with its case, model and arm."""
     return [dict(r, case=row["case"], model=row["model"], arm=arm)
             for row in doc["results"] for arm, key in (("with", "runs"), ("without", "withoutRuns")) for r in row[key]]
+
+
+def load(path: Path) -> dict:
+    try:
+        doc = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        raise Refusal(f"can't read {path}: {e}") from e
+    if not isinstance(doc, dict) or not isinstance(doc.get("results"), list) or "manifest" not in doc:
+        raise Refusal(f"{path} is not a results file (no manifest and results)")
+    return doc
+
+
+def skill_revision(doc: dict) -> dict:
+    """The manifest's skill revision, `{sha, dirty}`, or {} when it has none."""
+    return (doc["manifest"].get("revisions") or {}).get("skill") or {}
+
+
+def pct(rate: float | None) -> str:
+    """A pass rate as a whole percent, or `—` when there is none."""
+    return "—" if rate is None else f"{round(rate * 100)}%"
+
+
+def pp(change: float | None) -> str:
+    """A pass-rate change in signed percentage points, or `—` when there is none."""
+    if change is None:
+        return "—"
+    d = round(change * 100)
+    return f"{'+' if d > 0 else '−' if d < 0 else '±'}{abs(d)} pp"
