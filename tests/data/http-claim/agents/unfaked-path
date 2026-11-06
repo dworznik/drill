@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# calls an endpoint the fixture doesn't know: the agent sees a 502, the trace gets "fixture": null
+curl -sS -i https://testnet.garden/api/v1/acme/health
