@@ -22,6 +22,10 @@ _Avoid_: version, lock
 One prompt plus the expectations its run is checked against.
 _Avoid_: scenario, test, eval
 
+**Grader**:
+A check the runner applies to a run's reply or tool calls.
+_Avoid_: assertion, expectation, test
+
 **Held-out case**:
 A case kept in the rig, out of the skill author's sight.
 _Avoid_: private case, hidden test
@@ -43,6 +47,10 @@ _Avoid_: recording, cassette, sample data
 **Trace**:
 The ordered record of every shim call made during one run.
 _Avoid_: log, transcript
+
+**Trace assertion**:
+A check drill applies to a run's trace.
+_Avoid_: grader, expectation
 
 **Transcript**:
 The runner's record of the agent's messages during one run, distinct from the trace.
