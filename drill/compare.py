@@ -5,20 +5,9 @@ intervals don't overlap. Rows whose case hash or skill SHA differ are flagged. T
 gating: a regression is printed like any other change.
 """
 
-import json
 from pathlib import Path
 
 from drill.rig import Refusal
-
-
-def load(path: Path) -> dict:
-    try:
-        doc = json.loads(Path(path).read_text())
-    except (OSError, ValueError) as e:
-        raise Refusal(f"can't read {path}: {e}") from e
-    if not isinstance(doc, dict) or not isinstance(doc.get("results"), list) or "manifest" not in doc:
-        raise Refusal(f"{path} is not a results file (no manifest and results)")
-    return doc
 
 
 def newest_two(rig: Path) -> tuple[Path, Path]:
