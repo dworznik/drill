@@ -279,6 +279,17 @@ class EndToEnd(unittest.TestCase):
         transcript = path.with_suffix("") / "haiku" / "greet-ana" / "with-1" / "transcript.jsonl"
         self.assertIn("from greet", transcript.read_text())  # raw evidence keeps it as recorded
 
+    def test_a_model_error_is_masked_in_the_log_and_the_results_file(self):
+        rig_dir = copy_rig()
+        (rig_dir / "cases" / "greet-ana" / "trace-rules.json").write_text(
+            json.dumps({"rules": [{"secret": "unknown model"}]}))  # in the fake's stderr for model "broken"
+        rig = load_rig(rig_dir)
+        logs = []
+        path = drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("broken", {})],
+                     claude=FAKE_CLAUDE, log=logs.append, root=Path(tempfile.mkdtemp()))
+        self.assertNotIn("unknown model", path.read_text() + "\n".join(logs))
+        self.assertIn("<redacted>", path.read_text())
+
     def test_the_cli_never_prints_a_secret(self):
         rig = copy_rig()
         (rig / "cases" / "greet-ana" / "trace-rules.json").write_text(

@@ -56,6 +56,7 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
     evidence = results / stamp
     evidence.mkdir(parents=True, exist_ok=False)
     by_name = {c.name: c for c in cases}
+    literals = sorted({lit for c in cases for lit in secrets(c.rules)}, key=len, reverse=True)
     plugin_eval.prepare(skill, cases)
 
     root = root or run_root()
@@ -79,15 +80,16 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
             try:
                 aggregate = plugin_eval.run(skill, model, bin_dir, env_file, tmp_dir, out, runs=runs, claude=claude)
             except RuntimeError as e:  # keep the other models' runs
-                log(f"drill: {e}")
-                model_rows.append({"id": model.id, "settings": model.settings, "error": str(e)})
+                error = mask(str(e), literals)
+                log(f"drill: {error}")
+                model_rows.append({"id": model.id, "settings": model.settings, "error": error})
                 continue
             claude_version = aggregate.get("claudeVersion", claude_version)
             model_rows.append({"id": model.id, "settings": model.settings,
                                "costUsd": aggregate.get("costUsd"), "durationSeconds": aggregate.get("durationSeconds"),
                                "partial": aggregate.get("partial", False)})
             for r in plugin_eval.runs_of(aggregate):
-                run_rows.append(collect(r, by_name.get(r.case), model, out))
+                run_rows.append(collect(r, by_name.get(r.case), model, out, literals))
                 plugin_eval.remove_kept(r.kept)
     finally:
         plugin_eval.force_remove(run_dir)  # also any kept dir a run left without a tracePath
@@ -99,7 +101,14 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
     return path
 
 
-def collect(r: plugin_eval.RunRecord, case: Case | None, model, out: Path) -> dict:
+def mask(text: str | None, literals: list[str]) -> str | None:
+    """text with every secret literal of the drill's cases replaced by `<redacted>`."""
+    for lit in literals:
+        text = text and text.replace(lit, REDACTED)
+    return text
+
+
+def collect(r: plugin_eval.RunRecord, case: Case | None, model, out: Path, literals: list[str] = ()) -> dict:
     """Copy one run's trace and transcript into raw evidence and give it drill's status."""
     dest = out / r.case / f"{r.arm}-{r.index + 1}"
     dest.mkdir(parents=True, exist_ok=True)
@@ -122,8 +131,7 @@ def collect(r: plugin_eval.RunRecord, case: Case | None, model, out: Path) -> di
         error = "drill: no trace (.drill/trace.jsonl) in the run's workspace"
     if case is None and not error:
         error = f"drill: plugin eval ran a case drill didn't copy: {r.case}"
-    for lit in secrets(case.rules if case else {}):
-        error = error and error.replace(lit, REDACTED)
+    error = mask(error, literals)
     return {"case": r.case, "model": model.id, "arm": r.arm, "run": r.index + 1, "score": r.score,
             "error": error, "trace": [{"rule": v.what, "ok": v.ok, "why": v.why} for v in verdicts],
             "status": run_status(r.score, error, verdicts)}
