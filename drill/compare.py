@@ -53,8 +53,8 @@ def moved(a: dict | None, b: dict | None) -> bool:
     return ahi < blo or bhi < alo
 
 
-def _skill_sha(doc: dict) -> str | None:
-    return ((doc["manifest"].get("revisions") or {}).get("skill") or {}).get("sha")
+def _skill(doc: dict) -> dict:
+    return (doc["manifest"].get("revisions") or {}).get("skill") or {}
 
 
 def _hash(doc: dict, case: str) -> str | None:
@@ -71,7 +71,9 @@ def _table(header: list[str], lines: list[list[str]], title: str, moves: int) ->
 def compare_files(a: dict, b: dict, a_name: str, b_name: str) -> str:
     key = lambda r: (r["case"], r["runner"], r["model"])
     before, after = {key(r): r for r in a["results"]}, {key(r): r for r in b["results"]}
-    skill_changed = _skill_sha(a) != _skill_sha(b)
+    sa, sb = _skill(a), _skill(b)
+    # a dirty skill may differ from its SHA, so two runs of one dirty SHA can't be called the same skill
+    skill_changed = sa.get("sha") != sb.get("sha") or sa.get("dirty") or sb.get("dirty")
     lines, moves = [], 0
     for k in sorted(before.keys() | after.keys()):
         x, y = before.get(k), after.get(k)
