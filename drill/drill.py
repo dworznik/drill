@@ -133,5 +133,5 @@ def collect(r: plugin_eval.RunRecord, case: Case | None, model, out: Path, liter
         error = f"drill: plugin eval ran a case drill didn't copy: {r.case}"
     error = mask(error, literals)
     return {"case": r.case, "model": model.id, "arm": r.arm, "run": r.index + 1, "score": r.score,
-            "error": error, "trace": [{"rule": v.what, "ok": v.ok, "why": v.why} for v in verdicts],
+            "error": error, "trace": [{"rule": mask(v.what, literals), "ok": v.ok, "why": mask(v.why, literals)} for v in verdicts],
             "status": run_status(r.score, error, verdicts)}
