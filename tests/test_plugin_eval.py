@@ -158,6 +158,15 @@ class RunRoot(unittest.TestCase):
         with mock.patch.dict(os.environ, {"TMPDIR": "/tmp/x", "XDG_CACHE_HOME": "/c"}):
             self.assertEqual(run_root(), Path("/c/drill/runs"))
 
+    def test_a_hidden_root_that_is_a_symlink_still_counts(self):
+        # macOS: /tmp is a symlink to /private/tmp, so TMPDIR=/tmp/x resolves outside "/tmp"
+        real = Path(tempfile.mkdtemp())
+        link = Path(tempfile.mkdtemp()) / "tmp"
+        link.symlink_to(real)
+        with mock.patch("drill.drill.SANDBOX_HIDDEN", (link,)), \
+                mock.patch.dict(os.environ, {"TMPDIR": str(link / "x"), "XDG_CACHE_HOME": "/c"}):
+            self.assertEqual(run_root(), Path("/c/drill/runs"))
+
     def test_unset_tmpdir_falls_back_to_the_cache(self):
         env = {k: v for k, v in os.environ.items() if k != "TMPDIR"}
         with mock.patch.dict(os.environ, dict(env, XDG_CACHE_HOME="/c"), clear=True):

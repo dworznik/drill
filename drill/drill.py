@@ -25,6 +25,11 @@ def run_status(score: float, error: str | None, verdicts: list[Verdict]) -> str:
 SANDBOX_HIDDEN = (Path("/tmp"), Path("/var/tmp"), Path("/dev/shm"))
 
 
+def _hidden(path: Path) -> bool:
+    """Is path under a dir the sandbox hides? Compares resolved paths, since on macOS /tmp is /private/tmp."""
+    return any(path.resolve().is_relative_to(h.resolve()) for h in SANDBOX_HIDDEN)
+
+
 def run_root() -> Path:
     """Where a drill's shim bin/ and plugin eval's temp dirs live: `$TMPDIR` (ADR-0003), else the user cache.
 
@@ -33,7 +38,7 @@ def run_root() -> Path:
     workspace under $HOME stay reachable, so the cache is the fallback.
     """
     tmp = os.environ.get("TMPDIR")
-    if tmp and not any(Path(tmp).resolve().is_relative_to(h) for h in SANDBOX_HIDDEN):
+    if tmp and not _hidden(Path(tmp)):
         return Path(tmp)
     return user_cache() / "runs"
 
