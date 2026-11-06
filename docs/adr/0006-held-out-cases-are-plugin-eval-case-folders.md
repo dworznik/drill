@@ -1,0 +1,5 @@
+# Held-out cases are native `plugin eval` case folders, and drill checks traces itself
+
+A rig's `cases/<case>/` is a `plugin eval` case folder (`prompt.md`, `case.yaml`, `graders/`) plus drill's own `fixtures/` and `trace-rules.json`. There is no neutral drill format; a later runner gets a translator from this one. `plugin eval` has no custom-code graders, so drill checks trace rules itself after each run. A run passes only if its `plugin eval` score is 1.0 and every trace rule holds; a failed trace rule is `fail`, not `error`. Trace rules run on both arms; the without-skill arm only feeds the Δ. Every case keeps at least one real grader from its author. Decided in [Held-out case format and per-runner translation](https://github.com/dworznik/drill/issues/10).
+
+drill owns the scaffold: it writes its own `context.scaffold_script` into each copied case and refuses a case that sets one. v1 drills held-out cases only: drill empties the throwaway skill copy's `evals/` and copies the rig's cases in. Shipped cases would hit real tools, and `skill-creator`'s `evals.json` is never translated.

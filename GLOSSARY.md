@@ -40,12 +40,16 @@ _Avoid_: public case, bundled eval
 A fake stand-in for a tool the skill calls, which records each call to the trace and answers from a fixture.
 _Avoid_: mock, stub, fake binary
 
+**HTTP fake**:
+drill's stand-in for the network: a proxy that answers an agent's HTTP requests from fixtures, whatever client sent them, and records each one to the trace. Not a kind of shim: it isn't on `PATH` and isn't per binary.
+_Avoid_: mock server, HTTP shim
+
 **Fixture**:
-The canned, synthetic answers the shims give for one case.
+The canned, synthetic answers the shims and the HTTP fake give for one case.
 _Avoid_: recording, cassette, sample data
 
 **Trace**:
-The ordered record of every shim call made during one run.
+The ordered record of every shim call and HTTP request made during one run.
 _Avoid_: log, transcript
 
 **Trace assertion**:
