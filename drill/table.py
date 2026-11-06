@@ -3,16 +3,7 @@
 It names no case and shows nothing from one, since held-out cases stay private.
 """
 
-
-def _rate(x: float | None) -> str:
-    return "—" if x is None else f"{round(x * 100)}%"
-
-
-def _delta(x: float | None) -> str:
-    if x is None:
-        return "—"
-    d = round(x * 100)
-    return f"{'+' if d > 0 else '−' if d < 0 else '±'}{abs(d)} pp"
+from drill.results import pct, pp, skill_revision
 
 
 def render(doc: dict) -> str:
@@ -20,9 +11,9 @@ def render(doc: dict) -> str:
     for m in doc.get("models", []):
         c = m["counts"]
         lines.append(f"| {m['model']} | {c['pass']} | {c['flaky']} | {c['fail']} | "
-                     f"{_rate(m['meanPassRate'])} | {_delta(m['delta'])} |")
+                     f"{pct(m['meanPassRate'])} | {pp(m['delta'])} |")
     manifest = doc["manifest"]
-    skill = (manifest.get("revisions") or {}).get("skill") or {}
+    skill = skill_revision(doc)
     sha = f"`{skill['sha'][:12]}`" if skill.get("sha") else "unknown"
     dirty = " (uncommitted changes)" if skill.get("dirty") else ""
     date = (manifest.get("date") or "unknown")[:10]

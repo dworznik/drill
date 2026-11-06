@@ -7,6 +7,7 @@ gating: a regression is printed like any other change.
 
 from pathlib import Path
 
+from drill.results import pct, pp, skill_revision
 from drill.rig import Refusal
 
 
@@ -22,16 +23,10 @@ def _cell(row: dict | None) -> str:
     return "—" if row is None else f"{row['status']} {row['c']}/{row['n']}"
 
 
-def _pct(x: float) -> str:
-    return f"{round(x * 100)}%"
-
-
 def _change(a: dict | None, b: dict | None) -> str:
     if a is None or b is None or a["passRate"] is None or b["passRate"] is None:
         return "—"
-    d = round((b["passRate"] - a["passRate"]) * 100)
-    sign = "+" if d > 0 else "−" if d < 0 else "±"
-    return f"{_pct(a['passRate'])} → {_pct(b['passRate'])} ({sign}{abs(d)} pp)"
+    return f"{pct(a['passRate'])} → {pct(b['passRate'])} ({pp(b['passRate'] - a['passRate'])})"
 
 
 def moved(a: dict | None, b: dict | None) -> bool:
@@ -40,10 +35,6 @@ def moved(a: dict | None, b: dict | None) -> bool:
         return False
     (alo, ahi), (blo, bhi) = a["interval"], b["interval"]
     return ahi < blo or bhi < alo
-
-
-def _skill(doc: dict) -> dict:
-    return (doc["manifest"].get("revisions") or {}).get("skill") or {}
 
 
 def _hash(doc: dict, case: str) -> str | None:
@@ -60,7 +51,7 @@ def _table(header: list[str], lines: list[list[str]], title: str, moves: int) ->
 def compare_files(a: dict, b: dict, a_name: str, b_name: str) -> str:
     key = lambda r: (r["case"], r["runner"], r["model"])
     before, after = {key(r): r for r in a["results"]}, {key(r): r for r in b["results"]}
-    sa, sb = _skill(a), _skill(b)
+    sa, sb = skill_revision(a), skill_revision(b)
     # a dirty skill may differ from its SHA, so two runs of one dirty SHA can't be called the same skill
     skill_changed = sa.get("sha") != sb.get("sha") or sa.get("dirty") or sb.get("dirty")
     lines, moves = [], 0
