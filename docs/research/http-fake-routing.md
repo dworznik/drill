@@ -237,3 +237,44 @@ If step 4's CONNECT reaches mitmdump, the run is in a permission mode that allow
 - **Exact client error strings** (curl 23/56, Python `ProxyError`) are from memory, not the sources above.
 - **Linux only read from docs and source.** Nothing was executed on either platform from this session.
 - **Claude Code's bundled runtime version.** The source read is `sandbox-runtime` HEAD on 2026-11-06; Claude Code pins some version of `@anthropic-ai/sandbox-runtime`, and the env-var list could differ slightly. The docs' description matches this HEAD, so any drift is likely small.
+
+## Probe run (2026-11-06, Linux, Claude Code 2.1.318)
+
+Run in a cloud container after installing `bubblewrap` and `socat`: a throwaway stdlib CONNECT proxy
+(`http-fake-routing-probe/fake_proxy.py`, fakes `testnet.garden` with its own CA, tunnels every other
+host to the proxy that was `HTTPS_PROXY` before it) plus a one-case plugin
+(`http-fake-routing-probe/plugin`) whose scaffold drops `probe.sh` into the workspace and whose prompt
+asks the agent to run it. Command, with `$B` the drill CA appended to the host's own bundle:
+
+```sh
+HTTPS_PROXY=http://127.0.0.1:4443 HTTP_PROXY=http://127.0.0.1:4443 SSL_CERT_FILE=$B CURL_CA_BUNDLE=$B \
+REQUESTS_CA_BUNDLE=$B NODE_EXTRA_CA_CERTS=$B NODE_USE_ENV_PROXY=1 DRILL_MARKER=host-set \
+claude plugin eval plugin --trust-plugin --allow-tools Bash "WebFetch(domain:testnet.garden)" \
+  --scaffold --keep-temp --ablation none --runs 1 --model haiku
+```
+
+Two runs, both scored 1.0 at $0.00 in ~6 s. The kept run's `config/settings.json` is the effective sandbox
+config, so the inferences above can be checked against it.
+
+| Claim above | Probe result | Status |
+| :- | :- | :- |
+| `WebFetch(domain:…)` grants feed the sandbox allowlist | `settings.json` has `sandbox.network.allowedDomains: ["testnet.garden"]` and nothing else | **verified** |
+| Ungranted host fails fast, named | `curl https://example.com` → `curl: (56) CONNECT tunnel failed, response 403`; plain `http://example.com` → `403` with `X-Proxy-Error: blocked-by-allowlist`; the tool result ends with `<sandbox_violations> deny network-outbound example.com:443 (user denied) …` | **verified** |
+| Route (b) is dead on Linux | the namespace has only `lo`; `curl --noproxy '*' http://1.1.1.1` → `(7) Couldn't connect` in 0 ms | **verified** |
+| Child env is overwritten | `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY=http://srt.<id>:<token>@127.0.0.1:3128` (per-command credentials), `NO_PROXY=localhost,127.0.0.1,::1,169.254.0.0/16,10/8,172.16/12,192.168/16`, `SANDBOX_RUNTIME=1`, `TMPDIR=<run>/tmp/claude-0` | **verified** |
+| Plain HTTP chains to the host's `HTTPS_PROXY`/`HTTP_PROXY` | `curl http://testnet.garden/plain` from inside the run reached the fake (`via: absolute`, agent's curl UA, body recorded) and got the fixture, `HTTP=200` | **verified**: the parent-proxy hop exists and is taken from the launch env |
+| HTTPS CONNECT chains the same way | `curl https://testnet.garden/…` → `(56) CONNECT tunnel failed, response 502`; Python `urllib` → `Tunnel connection failed: 502`; the fake saw no CONNECT | **not reproduced here**, see below |
+| CA vars pass the allowlist | the child saw the container's pre-existing `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO` (`/root/.ccr/ca-bundle.crt`), **not** the values set on the command line; `NODE_USE_ENV_PROXY` and `DRILL_MARKER` were dropped; `EVAL_MARKER` arrived | **the names pass; whether a host-set value passes is still open**, since this container's Claude Code re-derives certificate settings from its own managed config |
+| `node fetch` | as inherited: `EAI_AGAIN` (dials direct, the namespace has no DNS); with `NODE_USE_ENV_PROXY=1` forced in the command: honors the proxy and fails only on the CONNECT 502 above | **verified**: `node fetch` needs `NODE_USE_ENV_PROXY=1`, and the allowlist does not pass it, so drill has to set it another way (a `node` shim that re-execs the real `node` with it set is the obvious one) |
+| `/tmp` from the host is readable | `/tmp/drill-probe/ca/bundle.pem` was **unreadable** inside the run while `/tmp` itself was writable: the sandbox mounts a private `/tmp` | **corrected**: the CA file (and anything else drill hands the run) must live in the workspace or another path, not under the host's `/tmp` |
+| `curl -o /tmp/…` fails | `: > /tmp/x` **succeeded** (private tmpfs), while `$TMPDIR` and the workspace failed with `Read-only file system` | **inconclusive**: `settings.json` carries `denyWrite: ["//tmp", "//var/tmp", …]` and `allowWrite: [<run>/home, <run>/tmp]`; the run dir sat under `/tmp` and then `/var/tmp` (denied parents), which a macOS `/var/folders` temp dir avoids. Whether the private `/tmp` persists between two Bash calls (the skill writes with `curl -o`, reads with `jq` in a later call) is untested |
+
+**Why CONNECT got a 502 here, and why it should not on a normal machine.** The sandbox proxy code in the 2.1.318 binary (`eus()`, `bao()`, the CONNECT handler) matches the runtime source: the parent proxy is built from the launch env's `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`; a CONNECT whose host is not in `NO_PROXY` (and not loopback) is sent to the parent proxy as a CONNECT, and the config schema says the loopback check is "Not evaluated for connections routed through parentProxy (including one taken from HTTP_PROXY/HTTPS_PROXY) … (that hop resolves the name)". The one path that takes precedence is `getMitmSocketPath`: when TLS termination is on, CONNECT goes to the MITM hop instead ("Routing CONNECT … through MITM proxy at …"), and that hop resolves the name itself. This container runs Claude Code with its own TLS-terminating proxy and has no working DNS on the host (`getent hosts testnet.garden` fails), so the MITM hop answered 502. A `plugin eval` run on a developer machine loads no settings, so `tlsTerminate` is off, the parent-proxy path is the one taken, and the plain-HTTP result above shows that path is wired to the launch env. Still to be seen on a Mac; the probe kit runs there unchanged (`brew install` nothing: the Seatbelt backend is built in).
+
+**What this changes in the recommendation.** Nothing in the route; three details for the prototype:
+
+1. Put the CA bundle in the workspace via the scaffold (or `add_dirs`), never under `/tmp`.
+2. Set `NODE_USE_ENV_PROXY=1` through a `node` shim on the prepended `PATH`, since the env allowlist drops it.
+3. Append the drill CA to the user's existing bundle rather than replacing it: `claude` itself reads `NODE_EXTRA_CA_CERTS`, and the parent proxy must tunnel the model API and telemetry hosts upstream untouched (the probe's fake forwarded `code.claude.com` and Datadog CONNECTs to the previous proxy; on a machine with no prior proxy it dials direct).
+
+Probe to finish on macOS (same kit): confirm the HTTPS CONNECT reaches the fake, read the CA vars the child sees with nothing pre-set on the host, and check whether a file written to `/tmp` in one Bash call is there in the next.

@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.318",
+  "startedAt": "2026-11-06T08:27:45.532Z",
+  "durationSeconds": 7,
+  "costUsd": 0.0030234700000000003,
+  "partial": false,
+  "suite": {
+    "root": "/tmp/drill-probe/plugin",
+    "ablation": "none",
+    "modelOverride": "haiku",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "drill-probe",
+        "version": "0.0.1",
+        "path": "/tmp/drill-probe/plugin"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "probe",
+      "dir": "evals/probe",
+      "source": "mixed",
+      "promptMarkdown": "Run exactly this one command with the Bash tool, once, and wait for it to finish:\n\n    bash ./probe.sh\n\nDo not read, change, retry or interpret anything. When it has finished, reply with the single word DONE.",
+      "runsPerCase": 1,
+      "timeoutSeconds": 180,
+      "maxTurns": 4,
+      "graders": [
+        {
+          "name": "done",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": "last_message",
+            "pattern": "DONE",
+            "flags": "",
+            "match": "contains"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 2,
+            "costUsd": 0.0030234700000000003,
+            "judgeCostUsd": 0,
+            "durationSeconds": 7,
+            "startedAt": "2026-11-06T08:27:45.551Z",
+            "error": null,
+            "tracePath": "/var/tmp/drill-eval/claude-eval-HUppAB/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "done",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched DONE",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 1,
+    "overallScore": 1,
+    "overallPassRate": 1
+  }
+}

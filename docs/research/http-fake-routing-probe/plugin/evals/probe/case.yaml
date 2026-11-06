@@ -1,0 +1,12 @@
+schema_version: "1.1"
+name: probe
+description: run the probe script once
+runs: 1
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 4
+  timeout_seconds: 180
+  allowed_tools: [Read]
+  env:
+    EVAL_MARKER: "reached"

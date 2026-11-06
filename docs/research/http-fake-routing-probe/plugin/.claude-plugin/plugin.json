@@ -1,0 +1,5 @@
+{
+  "name": "drill-probe",
+  "version": "0.0.1",
+  "description": "throwaway probe of the plugin eval sandbox for drill"
+}
