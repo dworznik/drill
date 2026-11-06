@@ -6,6 +6,7 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
+from drill import compare
 from drill.cases import load_cases
 from drill.drill import drill
 from drill.lib.http_fake import NoOpenSSL, require_openssl
@@ -67,7 +68,19 @@ def cmd_run(args) -> int:
 
 
 def cmd_compare(args) -> int:
-    raise Refusal("compare is not built yet")
+    files, models = args.results, args.model
+    if models or len(files) == 1:
+        if len(files) != 1 or len(models) != 2:
+            raise Refusal("to compare two models, give one results file and two --model")
+        print(compare.compare_models(compare.load(files[0]), models[0], models[1], files[0].name), end="")
+        return 0
+    if not files:
+        files = compare.newest_two(args.rig)
+    elif len(files) != 2:
+        raise Refusal("compare takes two results files, or none for the rig's two newest")
+    a, b = (compare.load(f) for f in files)
+    print(compare.compare_files(a, b, files[0].name, files[1].name), end="")
+    return 0
 
 
 def cmd_table(args) -> int:
@@ -87,9 +100,13 @@ def parser() -> argparse.ArgumentParser:
                      help="drill this local skill working tree instead of the rig's pin")
     run.set_defaults(func=cmd_run)
 
-    compare = sub.add_parser("compare", help="diff two results files (not built yet)")
-    compare.add_argument("results", nargs="*", type=Path, metavar="results.json")
-    compare.set_defaults(func=cmd_compare)
+    cmp = sub.add_parser("compare", help="diff two results files, or two models in one, as markdown")
+    cmp.add_argument("results", nargs="*", type=Path, metavar="results.json",
+                     help="before and after; none picks the rig's two newest")
+    cmp.add_argument("--rig", type=Path, default=Path("."), help="the rig whose results/ to read (default: .)")
+    cmp.add_argument("--model", action="append", default=[], metavar="ID",
+                     help="with one results file, give two: compare the first model to the second")
+    cmp.set_defaults(func=cmd_compare)
 
     table = sub.add_parser("table", help="render the public summary of a results file (not built yet)")
     table.add_argument("results", type=Path, metavar="results.json")
