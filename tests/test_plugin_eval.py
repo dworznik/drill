@@ -276,6 +276,32 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(list(self.root.rglob("claude-eval-*")), [])
         self.assertEqual(list(self.root.iterdir()), [])  # the shim bin/ goes too
 
+    def test_a_sealed_kept_dir_outside_the_run_root_is_read_and_deleted(self):
+        """macOS: plugin eval keeps runs in /tmp/e-*, with the workspace sealed under sealed/home/cwd."""
+        kept_root = Path(tempfile.mkdtemp())
+        with mock.patch.dict(os.environ, {"FAKE_SEAL": "1", "FAKE_KEPT_ROOT": str(kept_root)}):
+            path, results = self.drill("ok")
+        self.assertEqual(self.statuses(results), {("with", 1): "pass", ("without", 1): "pass"})
+        trace = (path.with_suffix("") / "haiku" / "greet-ana" / "with-1" / "trace.jsonl").read_text()
+        self.assertEqual(json.loads(trace.splitlines()[0])["argv"], ["--name", "Ana"])
+        self.assertEqual(list(kept_root.iterdir()), [])
+
+
+class RunLayout(unittest.TestCase):
+    def test_the_env_file_is_not_beside_the_shims(self):
+        """plugin eval's sandbox denies CLAUDE_ENV_FILE's directory, so bin/ must not sit in it."""
+        seen = {}
+
+        def fake_run(skill, model, bin_dir, env_file, tmp_dir, out, **_):
+            seen.update(bin=bin_dir.resolve(), env=env_file.parent.resolve())
+            raise RuntimeError("stop")
+
+        rig = load_rig(copy_rig())
+        with mock.patch("drill.drill.plugin_eval.run", fake_run):
+            drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("haiku", {})],
+                  log=lambda *_: None, root=Path(tempfile.mkdtemp()))
+        self.assertFalse(seen["bin"].is_relative_to(seen["env"]))
+
 
 if __name__ == "__main__":
     unittest.main()

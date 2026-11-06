@@ -150,9 +150,23 @@ def runs_of(aggregate: dict) -> list[RunRecord]:
                 records.append(RunRecord(
                     case=name, arm=arm, index=i, score=float(r.get("score") or 0), error=r.get("error"),
                     transcript=tp if tp and tp.is_file() else None,
-                    trace=(kept / "home" / "cwd" / ".drill" / "trace.jsonl") if kept else None,
+                    trace=(workspace(kept) / ".drill" / "trace.jsonl") if kept else None,
                     kept=kept))
     return records
+
+
+def workspace(kept: Path) -> Path:
+    """A run's workspace in its kept temp dir: `home/cwd`, or `sealed/home/cwd` once plugin eval seals it.
+
+    Where it seals (macOS), it moves home/ and tmp/ into sealed/ at mode 000 and makes the kept dir
+    read-only, so open both to read the trace.
+    """
+    sealed = kept / "sealed"
+    if not sealed.is_dir():
+        return kept / "home" / "cwd"
+    os.chmod(kept, 0o700)
+    os.chmod(sealed, 0o700)
+    return sealed / "home" / "cwd"
 
 
 def force_remove(path: Path) -> None:
@@ -169,6 +183,9 @@ def force_remove(path: Path) -> None:
 
 
 def remove_kept(kept: Path | None) -> None:
-    """Delete one run's kept temp dir once its evidence is copied."""
-    if kept and kept.name.startswith("claude-eval-"):
+    """Delete one run's kept temp dir once its evidence is copied.
+
+    Its name and place vary (`$TMPDIR/claude-eval-*` on Linux, `/tmp/e-*` on macOS), so tell it by its `out/`.
+    """
+    if kept and (kept / "out").is_dir():
         force_remove(kept)

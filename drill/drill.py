@@ -64,7 +64,10 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
     tmp_dir.mkdir()
     bin_dir = run_dir / "bin"
     install_shims(bin_dir, rig.shims)
-    env_file = run_dir / "env.sh"
+    # plugin eval's sandbox denies CLAUDE_ENV_FILE's whole directory as a credential, so keep it away from bin/
+    env_dir = run_dir / "env"
+    env_dir.mkdir()
+    env_file = env_dir / "env.sh"
     env_file.write_text(f'export PATH="{bin_dir}:$PATH"\n')
 
     run_rows, model_rows, claude_version = [], [], None

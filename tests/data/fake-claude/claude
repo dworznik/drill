@@ -8,9 +8,18 @@ Each run executes drill's scaffold in a fresh workspace, then plays the agent by
   apierror  the without arm hits an API error (score 0)
   skip      the agent never calls greet
   corrupt   the agent writes a broken line into .drill/trace.jsonl
+Like the real sandbox, the agent can't reach anything in CLAUDE_ENV_FILE's directory, which
+plugin eval denies as a credential. FAKE_SEAL=1 lays the kept dir out as on macOS: named e-*,
+with home/ and tmp/ moved into a mode-000 sealed/ and the kept dir read-only, and outside
+TMPDIR when FAKE_KEPT_ROOT names a dir.
 """
 import json, os, subprocess, sys, tempfile
 from pathlib import Path
+
+denied = Path(os.environ["CLAUDE_ENV_FILE"]).parent.resolve()
+agent_env = dict(os.environ, PATH=os.pathsep.join(
+    d for d in os.environ.get("PATH", "").split(os.pathsep) if d and not Path(d).resolve().is_relative_to(denied)))
+seal = os.environ.get("FAKE_SEAL") == "1"
 
 args = sys.argv[1:]
 assert args[:2] == ["plugin", "eval"], args
@@ -26,7 +35,7 @@ for case_dir in sorted((skill / "evals").iterdir()):
     for arm in ("with", "without"):
         arms[arm] = []
         for _ in range(runs):
-            kept = Path(tempfile.mkdtemp(prefix="claude-eval-"))
+            kept = Path(tempfile.mkdtemp(prefix="e-" if seal else "claude-eval-", dir=os.environ.get("FAKE_KEPT_ROOT")))
             cwd = kept / "home" / "cwd"
             cwd.mkdir(parents=True)
             (kept / "out").mkdir()
@@ -35,11 +44,20 @@ for case_dir in sorted((skill / "evals").iterdir()):
             if mode == "apierror" and arm == "without":
                 error = "API Error: 529 overloaded"
             elif mode != "skip":
-                subprocess.run(["greet", "--name", "Ana"], cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True)
+                try:
+                    subprocess.run(["greet", "--name", "Ana"], cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True,
+                                   env=agent_env)
+                except OSError:  # the sandbox hid the shim: the agent's command fails and it moves on
+                    pass
                 if mode == "corrupt":
                     with open(cwd / ".drill" / "trace.jsonl", "a") as f:
                         f.write('{"bin": "gre\n')
             (kept / "out" / "trace.jsonl").write_text(json.dumps({"type": "result", "result": "Hi Ana"}) + "\n")
+            if seal:
+                (kept / "sealed").mkdir()
+                (kept / "home").rename(kept / "sealed" / "home")
+                os.chmod(kept / "sealed", 0o000)
+                os.chmod(kept, 0o500)
             score = 0.0 if error else (0.5 if mode == "low" and arm == "with" else 1.0)
             arms[arm].append({"score": score, "passed": score == 1.0, "error": error,
                               "tracePath": str(kept / "out" / "trace.jsonl"), "graders": []})

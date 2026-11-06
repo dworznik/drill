@@ -18,10 +18,28 @@ import sys
 SHIM_NAME = ".drill-shim"
 
 
+def shim_python(candidates=None, home=None):
+    """An interpreter the agent's sandbox lets the shim run on.
+
+    plugin eval's sandbox denies reads under $HOME, so drill's own Python, when it's a pyenv or uv
+    build there, can't load libpython inside a run. Take the first real path outside home, from
+    drill's interpreter, then each python3 on PATH, then /usr/bin/python3; else drill's own.
+    """
+    home = os.path.realpath(home or os.path.expanduser("~"))
+    if candidates is None:
+        on_path = [os.path.join(d, "python3") for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+        candidates = [sys.executable, *on_path, "/usr/bin/python3"]
+    for c in candidates:
+        real = os.path.realpath(c)
+        if os.path.isfile(real) and os.access(real, os.X_OK) and not real.startswith(home + os.sep):
+            return real
+    return os.path.realpath(sys.executable)
+
+
 def install_shims(bin_dir, names, python=None):
     """Write the shim into bin_dir and symlink bin_dir/<name> to it for each faked binary."""
     os.makedirs(bin_dir, exist_ok=True)
-    python = python or os.path.realpath(sys.executable)
+    python = python or shim_python()
     with open(__file__, encoding="utf-8") as f:
         source = f.read()
     shim = os.path.join(bin_dir, SHIM_NAME)
