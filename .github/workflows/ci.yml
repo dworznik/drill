@@ -15,5 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - name: plugin eval sandbox deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap socat
+          # ubuntu 24.04 blocks the unprivileged user namespaces bubblewrap needs
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: claude code
+        run: npm install -g @anthropic-ai/claude-code@2.1.318
       - name: unit tests
+        env:
+          DRILL_REQUIRE_CLAUDE: "1"  # runner mechanics run real plugin eval against a scripted fake API
         run: uv run python -m unittest -v
