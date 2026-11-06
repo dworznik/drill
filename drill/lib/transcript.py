@@ -26,7 +26,7 @@ def agent_writing(path: Path) -> list[tuple[str, str]]:
     Lines that aren't JSON are skipped, so a cut-off transcript is still read up to the cut.
     """
     written = []
-    for line in Path(path).read_text(errors="replace").splitlines():
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             entry = json.loads(line)
         except ValueError:

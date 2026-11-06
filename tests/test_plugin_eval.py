@@ -280,6 +280,20 @@ class EndToEnd(unittest.TestCase):
         transcript = path.with_suffix("") / "haiku" / "greet-ana" / "with-1" / "transcript.jsonl"
         self.assertIn("from greet", transcript.read_text())  # raw evidence keeps it as recorded
 
+    def test_another_cases_secret_is_masked_in_verdicts(self):
+        rig_dir = copy_rig()
+        other = rig_dir / "cases" / "zz-other"
+        other.mkdir()
+        (other / "prompt.md").write_text("x\n")
+        (other / "trace-rules.json").write_text(json.dumps({"rules": [{"secret": "Ana"}]}))
+        (rig_dir / "cases" / "greet-ana" / "trace-rules.json").write_text(
+            json.dumps({"rules": [{"count": {"args": ["--name", "Ana"]}, "max": 0}]}))  # rule text names Ana
+        rig = load_rig(rig_dir)
+        with mock.patch.dict(os.environ, {"FAKE_EVAL": "ok"}):
+            path = drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("haiku", {})],
+                         claude=FAKE_CLAUDE, log=lambda *_: None, root=Path(tempfile.mkdtemp()))
+        self.assertNotIn("Ana", path.read_text())
+
     def test_a_model_error_is_masked_in_the_log_and_the_results_file(self):
         rig_dir = copy_rig()
         (rig_dir / "cases" / "greet-ana" / "trace-rules.json").write_text(
