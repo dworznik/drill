@@ -17,6 +17,7 @@ from unittest import mock
 
 from drill.cases import load_cases
 from drill.drill import drill
+from drill.results import all_runs
 from drill.rig import load_rig
 from drill.runners.plugin_eval import Model
 from tests.fake_api import serve
@@ -52,8 +53,8 @@ class RunnerMechanics(unittest.TestCase):
                          claude=CLAUDE, log=logs.append)
         results = json.loads(path.read_text())
         self.assertEqual(results["manifest"]["models"][0].get("error"), None, "\n".join(map(str, logs)))
-        self.assertEqual({(r["arm"], r["status"]) for r in results["runs"]}, {("with", "pass"), ("without", "pass")},
-                         json.dumps(results["runs"], indent=1))
+        self.assertEqual({(r["arm"], r["status"]) for r in all_runs(results)}, {("with", "pass"), ("without", "pass")},
+                         json.dumps(all_runs(results), indent=1))
         for arm in ("with-1", "without-1"):
             trace = (path.with_suffix("") / "haiku" / "greet-ana" / arm / "trace.jsonl").read_text().splitlines()
             self.assertEqual([json.loads(t)["argv"] for t in trace], [["--name", "Ana"]])

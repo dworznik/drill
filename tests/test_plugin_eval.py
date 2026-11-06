@@ -18,6 +18,7 @@ from unittest import mock
 from drill.cases import load_cases
 from drill.cli import main
 from drill.drill import drill, run_root, run_status
+from drill.results import all_runs
 from drill.lib.trace_rules import Verdict
 from drill.rig import Refusal, load_rig
 from drill.runners.plugin_eval import SCAFFOLD, Model, prepare, scaffold_text, with_scaffold
@@ -212,7 +213,7 @@ class EndToEnd(unittest.TestCase):
         return path, json.loads(path.read_text())
 
     def statuses(self, results):
-        return {(r["arm"], r["run"]): r["status"] for r in results["runs"]}
+        return {(r["arm"], r["run"]): r["status"] for r in all_runs(results)}
 
     def test_a_passing_drill_writes_the_results_file_and_raw_evidence(self):
         path, results = self.drill("ok")
@@ -234,7 +235,7 @@ class EndToEnd(unittest.TestCase):
     def test_trace_rules_run_on_both_arms_and_a_broken_rule_is_fail(self):
         _, results = self.drill("skip")
         self.assertEqual(self.statuses(results), {("with", 1): "fail", ("without", 1): "fail"})
-        for r in results["runs"]:
+        for r in all_runs(results):
             self.assertEqual(r["trace"], [{"rule": "count greet in 1..1", "ok": False, "why": "0 call(s): none"}])
             self.assertEqual(r["score"], 1.0)
 
@@ -254,26 +255,26 @@ class EndToEnd(unittest.TestCase):
                          claude=FAKE_CLAUDE, log=lambda *_: None, root=root)
         results = json.loads(path.read_text())
         self.assertIn("left no aggregate-result.json", results["manifest"]["models"][0]["error"])
-        self.assertEqual({r["model"] for r in results["runs"]}, {"haiku"})
+        self.assertEqual({r["model"] for r in all_runs(results)}, {"haiku"})
         self.assertEqual(list(root.iterdir()), [])
 
     def test_a_corrupt_trace_is_an_error_and_the_results_are_still_written(self):
         path, results = self.drill("corrupt")
         self.assertEqual(self.statuses(results), {("with", 1): "error", ("without", 1): "error"})
-        self.assertIn("unreadable trace", results["runs"][0]["error"])
+        self.assertIn("unreadable trace", all_runs(results)[0]["error"])
         self.assertTrue(path.is_file())
 
     def test_a_run_without_a_transcript_is_error(self):
         _, results = self.drill("notranscript")
         self.assertEqual(self.statuses(results), {("with", 1): "error", ("without", 1): "error"})
-        self.assertIn("no transcript", results["runs"][0]["error"])
+        self.assertIn("no transcript", all_runs(results)[0]["error"])
 
     def test_a_secret_the_agent_wrote_fails_the_run_and_is_never_printed(self):
         # the recorded with-arm agent repeats greet's output; the without-arm agent never ran greet
         rules = {"rules": [{"secret": "from greet", "label": "greeting"}]}
         path, results = self.drill("ok", rules=rules)
         self.assertEqual(self.statuses(results), {("with", 1): "fail", ("without", 1): "pass"})
-        self.assertEqual(results["runs"][0]["trace"],
+        self.assertEqual(all_runs(results)[0]["trace"],
                          [{"rule": "secret <greeting>", "ok": False, "why": "assistant text"}])
         self.assertNotIn("from greet", path.read_text())
         transcript = path.with_suffix("") / "haiku" / "greet-ana" / "with-1" / "transcript.jsonl"
@@ -323,15 +324,15 @@ class EndToEnd(unittest.TestCase):
                      claude=str(root / "no-such-claude"), log=lambda *_: None, root=root)
         results = json.loads(path.read_text())
         self.assertIn("could not start", results["manifest"]["models"][0]["error"])
-        self.assertEqual(results["runs"], [])
+        self.assertEqual(all_runs(results), [])
 
     def test_every_run_is_read_back(self):
         _, results = self.drill("ok", runs=3)
-        self.assertEqual(len(results["runs"]), 6)
+        self.assertEqual(len(all_runs(results)), 6)
 
     def test_kept_temp_dirs_are_deleted_after_evidence_is_copied(self):
         _, results = self.drill("ok", runs=2)
-        self.assertEqual(len(results["runs"]), 4)
+        self.assertEqual(len(all_runs(results)), 4)
         self.assertEqual(list(self.root.rglob("claude-eval-*")), [])
         self.assertEqual(list(self.root.iterdir()), [])  # the shim bin/ goes too
 
