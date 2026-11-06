@@ -1,0 +1,19 @@
+[
+  {"argv": ["auth", "status"],
+   "stderr": "github.com\n  ✓ Logged in to github.com account octo-drill (GH_TOKEN)\n"},
+
+  {"argv": ["repo", "view", "--json", "name,owner,defaultBranchRef"],
+   "stdout": {"name": "widgets", "owner": {"login": "octo-drill"}, "defaultBranchRef": {"name": "main"}}},
+
+  {"argv": ["api", "repos/octo-drill/widgets/actions/workflows"],
+   "stdout_file": "gh/workflows.json"},
+
+  {"argv": ["api", "repos/octo-drill/widgets/contents/README.md"],
+   "stdout": {"name": "README.md", "type": "file"}},
+
+  {"argv": ["api", "repos/octo-drill/widgets/contents/*"],
+   "stderr": "gh: Not Found (HTTP 404)\n", "exit": 1},
+
+  {"argv": ["run", "view", "4242", "--json", "status"], "stdout": {"status": "in_progress"}},
+  {"argv": ["run", "view", "4242", "--json", "status"], "stdout": {"status": "completed"}}
+]
