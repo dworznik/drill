@@ -1,0 +1,6 @@
+[
+  {"method": "POST", "url": "https://pets.drill.test/v1/adoptions", "status": 201,
+   "body": {"id": "adp_01", "pet": "Rex", "status": "adopted"}},
+  {"method": "GET", "url": "https://pets.drill.test/v1/adoptions/adp_01",
+   "body": {"id": "adp_01", "pet": "Rex", "status": "adopted"}}
+]

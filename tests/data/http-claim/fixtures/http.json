@@ -1,0 +1,21 @@
+[
+  {"method": "GET", "url": "https://testnet.garden/api/v1/acme",
+   "body": {"tenant": "acme", "network": "garden-sepolia", "drip": "0.05"}},
+
+  {"method": "POST", "url": "https://testnet.garden/api/v1/acme/claims", "status": 201,
+   "body": {"id": "clm_01", "message": "testnet.garden claim clm_01 for 0x1111111111111111111111111111111111111111"}},
+
+  {"method": "POST", "url": "https://testnet.garden/api/v1/acme/claims/clm_01/signature", "status": 202,
+   "body": {"id": "clm_01", "status": "queued"}},
+
+  {"method": "GET", "url": "https://testnet.garden/api/v1/acme/claims/clm_01", "body": {"id": "clm_01", "status": "queued"}},
+  {"method": "GET", "url": "https://testnet.garden/api/v1/acme/claims/clm_01", "body": {"id": "clm_01", "status": "sent"}},
+  {"method": "GET", "url": "https://testnet.garden/api/v1/acme/claims/clm_01",
+   "body": {"id": "clm_01", "status": "funded", "tx": "0xfeed"}},
+
+  {"method": "GET", "url": "https://testnet.garden/api/v1/acme/claims/*", "status": 404,
+   "body": {"error": "no such claim"}},
+
+  {"method": "POST", "url": "https://testnet.garden/api/v1/acme/claims?*", "status": 400,
+   "body": {"error": "send the secret in the body"}}
+]

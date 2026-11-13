@@ -1,16 +1,19 @@
 """trace rules, seeded from the prototype (proto/trace-assert) with its testnet-garden-claim traces.
 
 The prototype's never-in-argv rule is replaced by `secret` (ADR-0011).
+The HTTP rules are seeded from proto/21-http-fake, whose scripted agents run through the HTTP fake here.
 Expected failures are the bash prototype's own verdicts on the same files.
 """
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 from drill.lib.trace_rules import BadRules, check, env_keep_list, load_trace, report
 from drill.lib.transcript import agent_writing
+from tests import test_http_fake
 
 DATA = Path(__file__).parent / "data" / "trace-rules"
 RULES = json.loads((DATA / "trace-rules.json").read_text())
@@ -188,8 +191,143 @@ class Secret(unittest.TestCase):
         self.assertEqual((v.ok, v.what), (True, "secret <literal>"))
 
     def test_a_secret_needs_a_non_empty_literal(self):
-        with self.assertRaisesRegex(BadRules, "secret takes a non-empty string"):
+        with self.assertRaisesRegex(BadRules, "secret takes a non-empty literal"):
             check({"rules": [{"secret": ""}]}, [])
+
+
+def shim(**kw):
+    return {"bin": "rln", "argv": [], "env": {}, "stdin": None, "exit": 0, "fixture": 0, **kw}
+
+
+def request(**kw):
+    return {"method": "GET", "url": "https://testnet.garden/api", "headers": {}, "body": None, "status": 200,
+            "fixture": 0, **kw}
+
+
+def holds(rule, trace, calls=None):
+    """The one verdict of a single rule on trace."""
+    [v] = check({"calls": calls or {}, "rules": [rule]}, trace)
+    return v.ok
+
+
+class HttpMatchers(unittest.TestCase):
+    """Request matchers and rules, each passing and failing on a trace that mixes shim and HTTP lines."""
+
+    MIXED = [request(url="https://testnet.garden/api/v1/acme"),
+             shim(argv=["params"]),
+             request(method="POST", url="https://testnet.garden/api/v1/acme/claims", status=201,
+                     headers={"content-type": "application/json; charset=utf-8"}, body='{"secret":"%s"}' % SECRET),
+             shim(argv=["account", "sign"], stdin="msg")]
+
+    def test_method(self):
+        self.assertTrue(holds({"count": {"method": "POST"}, "min": 1, "max": 1}, self.MIXED))
+        self.assertFalse(holds({"count": {"method": "DELETE"}, "min": 1}, self.MIXED))
+
+    def test_url_is_a_regex(self):
+        self.assertTrue(holds({"count": {"url": "/claims$"}, "min": 1, "max": 1}, self.MIXED))
+        self.assertFalse(holds({"count": {"url": "^http://"}, "min": 1}, self.MIXED))
+
+    def test_status(self):
+        self.assertTrue(holds({"count": {"status": 201}, "min": 1, "max": 1}, self.MIXED))
+        self.assertFalse(holds({"count": {"status": 404}, "min": 1}, self.MIXED))
+
+    def test_a_request_matcher_never_hits_a_shim_line_nor_a_shim_matcher_a_request(self):
+        self.assertTrue(holds({"count": {"status": 200}, "min": 1, "max": 1}, self.MIXED))  # shim lines have no status
+        self.assertTrue(holds({"count": {"exit": 0}, "min": 2, "max": 2}, self.MIXED))  # requests have no exit
+
+    def test_order_mixes_both_kinds(self):
+        calls = {"tenant": {"method": "GET"}, "params": {"bin": "rln", "args": ["params"]},
+                 "start": {"method": "POST", "url": "/claims$"}, "sign": {"bin": "rln", "args": ["sign"]}}
+        self.assertTrue(holds({"order": ["tenant", "params", "start", "sign"]}, self.MIXED, calls))
+        self.assertFalse(holds({"order": ["params", "tenant"]}, self.MIXED, calls))
+
+    def test_in_body(self):
+        self.assertTrue(holds({"in-body": SECRET, "of": {"method": "POST"}}, self.MIXED))
+        self.assertFalse(holds({"in-body": "nope", "of": {"method": "POST"}}, self.MIXED))
+        self.assertFalse(holds({"in-body": SECRET, "of": {"method": "DELETE"}}, self.MIXED), "no such call")
+
+    def test_header_values_are_regexes_and_names_any_case(self):
+        self.assertTrue(holds({"header": {"Content-Type": "^application/json"}, "of": {"method": "POST"}}, self.MIXED))
+        self.assertFalse(holds({"header": {"content-type": "^text/"}, "of": {"method": "POST"}}, self.MIXED))
+
+    def test_header_null_means_only_present(self):
+        self.assertTrue(holds({"header": {"content-type": None}, "of": {"method": "POST"}}, self.MIXED))
+        self.assertFalse(holds({"header": {"authorization": None}, "of": {"method": "POST"}}, self.MIXED))
+
+    def test_a_request_miss_names_the_request(self):
+        [v] = check({"rules": []}, self.MIXED + [request(url="https://testnet.garden/health", status=502, fixture=None)])
+        self.assertEqual((v.ok, v.why), (False, "line 5: GET https://testnet.garden/health"))
+
+    def test_a_matcher_mixing_shim_and_request_fields_is_an_error(self):
+        with self.assertRaisesRegex(BadRules, "a shim call or a request, not both"):
+            check({"rules": [{"count": {"bin": "curl", "url": "x"}}]}, [])
+
+    def test_a_bad_url_or_header_regex_is_an_error(self):
+        with self.assertRaisesRegex(BadRules, "bad url regex"):
+            check({"rules": [{"count": {"url": "("}}]}, [])
+        with self.assertRaisesRegex(BadRules, "bad header regex"):
+            check({"rules": [{"header": {"a": "("}, "of": {"method": "GET"}}]}, [])
+
+
+class SecretInRequests(unittest.TestCase):
+    RULE = {"secret": SECRET, "label": "link secret"}
+
+    def test_a_secret_in_a_shim_argv_fails(self):
+        [v] = check({"rules": [self.RULE]}, [request(), shim(argv=["--secret", SECRET])])
+        self.assertEqual((v.ok, v.why), (False, "argv on line 2"))
+
+    def test_a_secret_in_a_request_url_fails_and_is_masked(self):
+        trace = [request(method="POST", url=f"https://testnet.garden/claims?secret={SECRET}")]
+        [v] = check({"rules": [self.RULE]}, trace)
+        self.assertFalse(v.ok)
+        self.assertEqual((v.what, v.why), ("secret <link secret>", "URL on line 1"))
+
+    def test_the_same_secret_in_a_body_or_header_passes(self):
+        trace = [request(method="POST", body=SECRET, headers={"authorization": f"Bearer {SECRET}"}),
+                 shim(stdin=SECRET)]
+        self.assertTrue(holds(self.RULE, trace))
+
+
+HTTP_RULES = json.loads((Path(__file__).parent / "data" / "http-claim" / "trace-rules.json").read_text())
+# indexes into HTTP_RULES["rules"]: the claim rig's rules ported from curl argv to requests
+H_ORDER, H_START, H_POLL, H_ELSEWHERE, H_SECRET, H_IN_BODY, H_HEADER, H_ENV, H_STOP_AFTER = range(9)
+
+
+class ClaimAgents(unittest.TestCase):
+    """The prototype's scripted agents, run through the HTTP fake, checked with the ported claim rules."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("curl"):
+            raise unittest.SkipTest("needs curl")
+
+    def verdicts(self, agent):
+        driver = test_http_fake.ScriptedAgents(methodName="run")
+        driver.setUp()
+        self.addCleanup(driver.doCleanups)
+        _, trace = driver.drive(agent)
+        return check(HTTP_RULES, trace)
+
+    def failed(self, agent):
+        return {v.rule for v in self.verdicts(agent) if not v.ok}
+
+    def test_the_good_agents_pass_every_rule(self):
+        for agent in ("good-curl", "good-python"):
+            with self.subTest(agent):
+                verdicts = self.verdicts(agent)
+                self.assertEqual(len(verdicts), 9)
+                self.assertTrue(all(v.ok for v in verdicts), report(verdicts))
+
+    def test_a_secret_in_the_url_fails_secret(self):
+        self.assertEqual(self.failed("secret-in-url"), {H_SECRET, H_ORDER, H_START, H_POLL, H_IN_BODY})
+        self.assertNotIn(SECRET, report(self.verdicts("secret-in-url")))
+
+    def test_posting_without_a_content_type_fails_header(self):
+        self.assertEqual(self.failed("no-content-type"), {H_HEADER, H_ORDER, H_POLL})
+
+    def test_an_unfaked_path_fails_the_run_on_its_miss(self):
+        [v] = self.verdicts("unfaked-path")
+        self.assertEqual((v.rule, v.ok, v.why), (None, False, "line 1: GET https://testnet.garden/api/v1/acme/health"))
 
 
 class EnvKeepList(unittest.TestCase):
