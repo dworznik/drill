@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from drill.cases import Case
-from drill.lib.shim import install_shims
+from drill.lib.http_fake import HttpFake, install_node_passthrough, run_env, trust_bundle, upstream_proxy
+from drill.lib.shim import install_shims, shim_python
 from drill.lib.trace_rules import Verdict, check, load_trace
 from drill.rig import Rig
 from drill.skill import user_cache
@@ -55,7 +56,6 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
     evidence = results / stamp
     evidence.mkdir(parents=True, exist_ok=False)
     by_name = {c.name: c for c in cases}
-    plugin_eval.prepare(skill, cases)
 
     root = root or run_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -71,12 +71,23 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
     env_file.write_text(f'export PATH="{bin_dir}:$PATH"\n')
 
     run_rows, model_rows, claude_version = [], [], None
+    fake = None
     try:
+        http_env = None
+        if rig.hosts:
+            # The fake's CA and the bundle the run trusts live in the run dir, never under /tmp (ADR-0013).
+            fake = HttpFake(run_dir / "http-ca", rig.hosts, upstream=upstream_proxy()).start()
+            http_env = run_env(fake, trust_bundle(run_dir / "trust" / "ca-bundle.pem", fake.ca))
+            if "node" not in rig.shims:
+                install_node_passthrough(bin_dir, shim_python())
+            log(f"drill: HTTP fake on {fake.url} for {', '.join(rig.hosts)}")
+        plugin_eval.prepare(skill, cases, (shim_python(), fake.url) if fake else None)
         for model in models:
             out = evidence / model.slug
             log(f"drill: running {len(cases)} case(s) on {model.id}")
             try:
-                aggregate = plugin_eval.run(skill, model, bin_dir, env_file, tmp_dir, out, runs=runs, claude=claude)
+                aggregate = plugin_eval.run(skill, model, bin_dir, env_file, tmp_dir, out, runs=runs, claude=claude,
+                                            hosts=rig.hosts, http_env=http_env)
             except RuntimeError as e:  # keep the other models' runs
                 log(f"drill: {e}")
                 model_rows.append({"id": model.id, "settings": model.settings, "error": str(e)})
@@ -89,6 +100,10 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
                 run_rows.append(collect(r, by_name.get(r.case), model, out))
                 plugin_eval.remove_kept(r.kept)
     finally:
+        if fake is not None:
+            fake.stop()
+            for t in sorted(fake.tunnelled):
+                log(f"drill: HTTP fake tunnelled {t} (not a rig host)")
         plugin_eval.force_remove(run_dir)  # also any kept dir a run left without a tracePath
 
     manifest = {"revisions": revisions, "runner": "plugin-eval", "claudeVersion": claude_version,

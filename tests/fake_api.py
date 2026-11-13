@@ -1,8 +1,8 @@
 """A scripted Anthropic Messages API, so real `claude plugin eval` runs with no model and no key.
 
-The agent always runs `greet --name Ana` through Bash, then says the tool's output. Requests
-without tools (the llm grader) get a passing verdict. Everything else plugin eval does is real:
-its sandbox, drill's scaffold, the shims and the kept temp dirs.
+The agent runs the script's commands through Bash, one per turn (by default `greet --name Ana`),
+then says its reply. Requests without tools (the llm grader) get a passing verdict. Everything
+else plugin eval does is real: its sandbox, drill's scaffold, the shims and the kept temp dirs.
 """
 
 import itertools
@@ -11,18 +11,19 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-def _saw_tool_result(messages: list) -> bool:
-    return any(isinstance(m.get("content"), list) and any(b.get("type") == "tool_result" for b in m["content"])
-               for m in messages)
+def _tool_results(messages: list) -> int:
+    return sum(1 for m in messages if isinstance(m.get("content"), list)
+               for b in m["content"] if b.get("type") == "tool_result")
 
 
-def _reply(req: dict, ids) -> tuple[list, str]:
+def _reply(req: dict, ids, commands: list[str], text: str) -> tuple[list, str]:
     tools = {t.get("name") for t in req.get("tools") or []}
-    if "Bash" in tools and not _saw_tool_result(req.get("messages", [])):
+    done = _tool_results(req.get("messages", []))
+    if "Bash" in tools and done < len(commands):
         return [{"type": "tool_use", "id": f"toolu_{next(ids):04d}", "name": "Bash",
-                 "input": {"command": "greet --name Ana", "description": "Greet Ana"}}], "tool_use"
+                 "input": {"command": commands[done], "description": f"Step {done + 1}"}}], "tool_use"
     if "Bash" in tools:
-        return [{"type": "text", "text": "Hi Ana, from greet"}], "end_turn"
+        return [{"type": "text", "text": text}], "end_turn"
     return [{"type": "text", "text": '{"pass": true, "score": 1, "reason": "scripted"}'}], "end_turn"
 
 
@@ -35,7 +36,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.server.requests.append(req)
         if not self.path.startswith("/v1/messages") or "count_tokens" in self.path:
             return self._json({"input_tokens": 10})
-        content, stop = _reply(req, self.server.ids)
+        content, stop = _reply(req, self.server.ids, self.server.commands, self.server.text)
         msg = {"id": f"msg_{next(self.server.ids)}", "type": "message", "role": "assistant",
                "model": req.get("model", "fake"), "content": content, "stop_reason": stop, "stop_sequence": None,
                "usage": {"input_tokens": 10, "output_tokens": 5}}
@@ -73,10 +74,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def serve() -> ThreadingHTTPServer:
+def serve(commands=("greet --name Ana",), text="Hi Ana, from greet") -> ThreadingHTTPServer:
     """Start the fake API on a free localhost port; its base URL is `server.url`. Call shutdown() when done."""
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     server.requests, server.ids = [], itertools.count(1)
+    server.commands, server.text = list(commands), text
     server.url = f"http://127.0.0.1:{server.server_address[1]}"
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server

@@ -1,0 +1,6 @@
+{
+  "repo": "octo/skills",
+  "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "path": "skills/pets",
+  "hosts": ["pets.drill.test"]
+}
