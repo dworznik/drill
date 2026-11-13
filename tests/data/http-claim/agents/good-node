@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# only the tenant GET, with node's fetch, to show it routes when NODE_USE_ENV_PROXY=1 (a `node` shim's job)
+NODE_USE_ENV_PROXY=1 node -e 'fetch("https://testnet.garden/api/v1/acme").then(r=>r.json()).then(j=>console.log("node got", j))'
