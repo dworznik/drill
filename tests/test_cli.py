@@ -43,11 +43,6 @@ class DrillRunRefusesABrokenRig(unittest.TestCase):
 
 
 class UnbuiltCommands(unittest.TestCase):
-    def test_compare_is_not_built(self):
-        code, _, err = run_cli("compare")
-        self.assertNotEqual(code, 0)
-        self.assertIn("not built yet", err)
-
     def test_table_is_not_built(self):
         code, _, err = run_cli("table", "results.json")
         self.assertNotEqual(code, 0)
