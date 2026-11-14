@@ -4,6 +4,7 @@ The end-to-end tests drive drill() against tests/data/fake-claude/claude, which 
 same temp-dir layout and aggregate-result.json shape that plugin eval 2.1.318 does.
 """
 
+import io
 import json
 import os
 import shutil
@@ -11,9 +12,11 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import redirect_stdout
 from unittest import mock
 
 from drill.cases import load_cases
+from drill.cli import main
 from drill.drill import drill, run_root, run_status
 from drill.lib.trace_rules import Verdict
 from drill.rig import Refusal, load_rig
@@ -197,8 +200,11 @@ class ModelSpec(unittest.TestCase):
 class EndToEnd(unittest.TestCase):
     """drill() against the fake plugin eval."""
 
-    def drill(self, mode, runs=None):
-        rig = load_rig(copy_rig())
+    def drill(self, mode, runs=None, rules=None):
+        rig_dir = copy_rig()
+        if rules is not None:
+            (rig_dir / "cases" / "greet-ana" / "trace-rules.json").write_text(json.dumps(rules))
+        rig = load_rig(rig_dir)
         cases = load_cases(rig.path / "cases")
         self.root = Path(tempfile.mkdtemp())
         with mock.patch.dict(os.environ, {"FAKE_EVAL": mode}):
@@ -258,6 +264,59 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(self.statuses(results), {("with", 1): "error", ("without", 1): "error"})
         self.assertIn("unreadable trace", results["runs"][0]["error"])
         self.assertTrue(path.is_file())
+
+    def test_a_run_without_a_transcript_is_error(self):
+        _, results = self.drill("notranscript")
+        self.assertEqual(self.statuses(results), {("with", 1): "error", ("without", 1): "error"})
+        self.assertIn("no transcript", results["runs"][0]["error"])
+
+    def test_a_secret_the_agent_wrote_fails_the_run_and_is_never_printed(self):
+        # the recorded with-arm agent repeats greet's output; the without-arm agent never ran greet
+        rules = {"rules": [{"secret": "from greet", "label": "greeting"}]}
+        path, results = self.drill("ok", rules=rules)
+        self.assertEqual(self.statuses(results), {("with", 1): "fail", ("without", 1): "pass"})
+        self.assertEqual(results["runs"][0]["trace"],
+                         [{"rule": "secret <greeting>", "ok": False, "why": "assistant text"}])
+        self.assertNotIn("from greet", path.read_text())
+        transcript = path.with_suffix("") / "haiku" / "greet-ana" / "with-1" / "transcript.jsonl"
+        self.assertIn("from greet", transcript.read_text())  # raw evidence keeps it as recorded
+
+    def test_another_cases_secret_is_masked_in_verdicts(self):
+        rig_dir = copy_rig()
+        other = rig_dir / "cases" / "zz-other"
+        other.mkdir()
+        (other / "prompt.md").write_text("x\n")
+        (other / "trace-rules.json").write_text(json.dumps({"rules": [{"secret": "Ana"}]}))
+        (rig_dir / "cases" / "greet-ana" / "trace-rules.json").write_text(
+            json.dumps({"rules": [{"count": {"args": ["--name", "Ana"]}, "max": 0}]}))  # rule text names Ana
+        rig = load_rig(rig_dir)
+        with mock.patch.dict(os.environ, {"FAKE_EVAL": "ok"}):
+            path = drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("haiku", {})],
+                         claude=FAKE_CLAUDE, log=lambda *_: None, root=Path(tempfile.mkdtemp()))
+        self.assertNotIn("Ana", path.read_text())
+
+    def test_a_model_error_is_masked_in_the_log_and_the_results_file(self):
+        rig_dir = copy_rig()
+        (rig_dir / "cases" / "greet-ana" / "trace-rules.json").write_text(
+            json.dumps({"rules": [{"secret": "unknown model"}]}))  # in the fake's stderr for model "broken"
+        rig = load_rig(rig_dir)
+        logs = []
+        path = drill(rig, load_cases(rig.path / "cases"), skill_copy(), {}, [Model("broken", {})],
+                     claude=FAKE_CLAUDE, log=logs.append, root=Path(tempfile.mkdtemp()))
+        self.assertNotIn("unknown model", path.read_text() + "\n".join(logs))
+        self.assertIn("<redacted>", path.read_text())
+
+    def test_the_cli_never_prints_a_secret(self):
+        rig = copy_rig()
+        (rig / "cases" / "greet-ana" / "trace-rules.json").write_text(
+            json.dumps({"rules": [{"secret": "--name", "label": "flag"}]}))  # in greet's argv
+        out = io.StringIO()
+        path = f"{DATA / 'fake-claude'}{os.pathsep}{os.environ['PATH']}"
+        with mock.patch.dict(os.environ, {"FAKE_EVAL": "ok", "PATH": path, "TMPDIR": tempfile.mkdtemp(dir=Path.home())}), \
+                redirect_stdout(out):
+            self.assertEqual(main(["run", str(rig), "--skill", str(skill_copy()), "--model", "haiku"]), 0)
+        self.assertIn("FAIL secret <flag>", out.getvalue())
+        self.assertNotIn("--name", out.getvalue())
 
     def test_a_claude_that_cannot_start_is_recorded_as_a_model_error(self):
         rig = load_rig(copy_rig())

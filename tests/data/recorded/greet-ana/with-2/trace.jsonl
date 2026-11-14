@@ -1,0 +1,1 @@
+{"bin": "greet", "argv": ["--name", "Ana"], "env": {}, "stdin": null, "exit": 0, "fixture": 0}

@@ -10,7 +10,8 @@ from pathlib import Path
 from drill.cases import Case
 from drill.lib.http_fake import HttpFake, install_node_passthrough, run_env, trust_bundle, upstream_proxy
 from drill.lib.shim import install_shims, shim_python
-from drill.lib.trace_rules import Verdict, check, load_trace
+from drill.lib.trace_rules import REDACTED, Verdict, check, load_trace, secrets
+from drill.lib.transcript import agent_writing
 from drill.rig import Rig
 from drill.skill import user_cache
 from drill.runners import plugin_eval
@@ -56,6 +57,7 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
     evidence = results / stamp
     evidence.mkdir(parents=True, exist_ok=False)
     by_name = {c.name: c for c in cases}
+    literals = sorted({lit for c in cases for lit in secrets(c.rules)}, key=len, reverse=True)
 
     root = root or run_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -89,15 +91,16 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
                 aggregate = plugin_eval.run(skill, model, bin_dir, env_file, tmp_dir, out, runs=runs, claude=claude,
                                             hosts=rig.hosts, http_env=http_env)
             except RuntimeError as e:  # keep the other models' runs
-                log(f"drill: {e}")
-                model_rows.append({"id": model.id, "settings": model.settings, "error": str(e)})
+                error = mask(str(e), literals)
+                log(f"drill: {error}")
+                model_rows.append({"id": model.id, "settings": model.settings, "error": error})
                 continue
             claude_version = aggregate.get("claudeVersion", claude_version)
             model_rows.append({"id": model.id, "settings": model.settings,
                                "costUsd": aggregate.get("costUsd"), "durationSeconds": aggregate.get("durationSeconds"),
                                "partial": aggregate.get("partial", False)})
             for r in plugin_eval.runs_of(aggregate):
-                run_rows.append(collect(r, by_name.get(r.case), model, out))
+                run_rows.append(collect(r, by_name.get(r.case), model, out, literals))
                 plugin_eval.remove_kept(r.kept)
     finally:
         if fake is not None:
@@ -113,27 +116,37 @@ def drill(rig: Rig, cases: list[Case], skill: Path, revisions: dict, models: lis
     return path
 
 
-def collect(r: plugin_eval.RunRecord, case: Case | None, model, out: Path) -> dict:
+def mask(text: str | None, literals: list[str]) -> str | None:
+    """text with every secret literal of the drill's cases replaced by `<redacted>`."""
+    for lit in literals:
+        text = text and text.replace(lit, REDACTED)
+    return text
+
+
+def collect(r: plugin_eval.RunRecord, case: Case | None, model, out: Path, literals: list[str] = ()) -> dict:
     """Copy one run's trace and transcript into raw evidence and give it drill's status."""
     dest = out / r.case / f"{r.arm}-{r.index + 1}"
     dest.mkdir(parents=True, exist_ok=True)
     error = r.error
     verdicts: list[Verdict] = []
+    written = []
     if r.transcript:
         shutil.copyfile(r.transcript, dest / "transcript.jsonl")
+        written = agent_writing(r.transcript)
     elif not error:
         error = "drill: no transcript at plugin eval's tracePath"
     if r.trace and r.trace.is_file():
         shutil.copyfile(r.trace, dest / "trace.jsonl")
         if case is not None:
             try:
-                verdicts = check(case.rules, load_trace(r.trace))
+                verdicts = check(case.rules, load_trace(r.trace), written)
             except ValueError as e:  # the agent can write to the trace; JSONDecodeError and UnicodeDecodeError are ValueErrors
                 error = error or f"drill: unreadable trace (.drill/trace.jsonl): {e}"
     elif not error:
         error = "drill: no trace (.drill/trace.jsonl) in the run's workspace"
     if case is None and not error:
         error = f"drill: plugin eval ran a case drill didn't copy: {r.case}"
+    error = mask(error, literals)
     return {"case": r.case, "model": model.id, "arm": r.arm, "run": r.index + 1, "score": r.score,
-            "error": error, "trace": [{"rule": v.what, "ok": v.ok, "why": v.why} for v in verdicts],
+            "error": error, "trace": [{"rule": mask(v.what, literals), "ok": v.ok, "why": mask(v.why, literals)} for v in verdicts],
             "status": run_status(r.score, error, verdicts)}

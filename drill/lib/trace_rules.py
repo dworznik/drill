@@ -107,7 +107,8 @@ def _regex(pattern, why: str) -> None:
         raise BadRules(f"{why} {pattern!r}: {e}") from e
 
 
-def _literals(rules: dict) -> list[str]:
+def secrets(rules: dict) -> list[str]:
+    """The literals a rules file names, which drill masks wherever it prints."""
     return [r[k] for r in rules.get("rules", []) for k in ("in-stdin", "in-body", "secret")
             if isinstance(r.get(k), str) and r[k]]
 
@@ -151,8 +152,10 @@ def _text(value) -> str:
     return value if isinstance(value, str) else ""
 
 
-def check(rules: dict, trace: list[dict]) -> list[Verdict]:
-    literals = _literals(rules)
+def check(rules: dict, trace: list[dict], written: list[tuple[str, str]] = ()) -> list[Verdict]:
+    """One verdict per rule. `written` is what the agent wrote, from `transcript.agent_writing`,
+    which only the `secret` rule reads."""
+    literals = secrets(rules)
     trace = [c if "line" in c else dict(c, line=n) for n, c in enumerate(trace, 1)]
 
     def mask(s: str) -> str:
@@ -202,11 +205,12 @@ def check(rules: dict, trace: list[dict]) -> list[Verdict]:
             v = Verdict(i, ok, f"count {name(r['count'])} in {lo}..{'∞' if hi is None else hi}",
                         f"{len(xs)} call(s): {_lines(xs)}")
         elif "secret" in r:
-            # argv and request URLs only: stdin, bodies and headers are a secret's proper channels (ADR-0014).
-            # The transcript half (what the agent wrote) is #29's.
+            # argv, request URLs and what the agent wrote in the transcript (ADR-0011); stdin, bodies and
+            # headers are a secret's proper channels (ADR-0014).
             lit = r["secret"]
             where = [f"{'URL' if _is_request(c) else 'argv'} on {_lines([c])}" for c in trace
                      if (lit in (c.get("url") or "") if _is_request(c) else any(lit in a for a in c.get("argv") or []))]
+            where += sorted({w for w, text in written if lit in text})
             v = Verdict(i, not where, f"secret <{label}>", "; ".join(where))
         elif "in-stdin" in r or "in-body" in r:
             key, field = ("in-stdin", "stdin") if "in-stdin" in r else ("in-body", "body")

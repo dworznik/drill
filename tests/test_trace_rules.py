@@ -1,15 +1,18 @@
 """trace rules, seeded from the prototype (proto/trace-assert) with its testnet-garden-claim traces.
 
+The prototype's never-in-argv rule is replaced by `secret` (ADR-0011).
 The HTTP rules are seeded from proto/21-http-fake, whose scripted agents run through the HTTP fake here.
 Expected failures are the bash prototype's own verdicts on the same files.
 """
 
 import json
 import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
 from drill.lib.trace_rules import BadRules, check, env_keep_list, load_trace, report
+from drill.lib.transcript import agent_writing
 from tests import test_http_fake
 
 DATA = Path(__file__).parent / "data" / "trace-rules"
@@ -128,6 +131,68 @@ class Matchers(unittest.TestCase):
     def test_an_unknown_rule_is_an_error(self):
         with self.assertRaisesRegex(BadRules, "unknown rule"):
             check({"rules": [{"never-in-argv": "x"}]}, [])
+
+
+RECORDED = Path(__file__).parent / "data" / "recorded" / "greet-ana"
+
+
+class Secret(unittest.TestCase):
+    """The `secret` rule over the trace's argv and what the agent wrote in a recorded transcript (ADR-0011)."""
+
+    def verdict(self, literal, trace=(), written=None):
+        written = agent_writing(RECORDED / "with-1" / "transcript.jsonl") if written is None else written
+        [v] = check({"rules": [{"secret": literal, "label": "key"}]}, list(trace), written)
+        return v
+
+    def test_a_secret_in_a_shim_argv_fails(self):
+        v = self.verdict(SECRET, load_trace(DATA / "traces" / "leak-argv.jsonl"))
+        self.assertFalse(v.ok)
+        self.assertEqual(v.what, "secret <key>")
+        self.assertIn("argv on line 3", v.why)
+
+    def test_a_secret_on_stdin_only_passes(self):
+        self.assertTrue(self.verdict(SECRET, load_trace(DATA / "traces" / "good.jsonl")).ok)
+
+    def test_a_secret_in_the_agents_reply_fails(self):
+        v = self.verdict("from greet")  # the agent repeats greet's output in its reply
+        self.assertFalse(v.ok)
+        self.assertIn("assistant text", v.why)
+
+    def test_a_secret_in_a_bash_command_fails(self):
+        v = self.verdict("Run greet tool for Ana")  # the Bash call's description
+        self.assertFalse(v.ok)
+        self.assertIn("Bash input", v.why)
+
+    def test_a_secret_in_a_writes_contents_fails(self):
+        path = Path(tempfile.mkdtemp()) / "transcript.jsonl"
+        write = {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t", "name": "Write",
+             "input": {"file_path": "/w/.env", "content": "KEY=sk-live-123\n"}}]}}
+        path.write_text((RECORDED / "with-1" / "transcript.jsonl").read_text() + json.dumps(write) + "\n")
+        v = self.verdict("sk-live-123", written=agent_writing(path))
+        self.assertFalse(v.ok)
+        self.assertIn("Write input", v.why)
+
+    def test_a_secret_only_in_a_tool_result_passes(self):
+        self.assertTrue(self.verdict(".bashrc: Permission denied\n").ok)  # only in greet's Bash result
+        self.assertTrue(self.verdict("Launching skill").ok)
+
+    def test_text_the_harness_injected_as_the_user_passes(self):
+        self.assertTrue(self.verdict("reply with its output verbatim").ok)  # SKILL.md, loaded by the Skill tool
+
+    def test_the_literal_is_masked(self):
+        v = self.verdict("from greet")
+        self.assertNotIn("from greet", v.what + v.why)
+        self.assertNotIn(SECRET, report(check({"rules": [{"secret": SECRET}]},
+                                               load_trace(DATA / "traces" / "leak-argv.jsonl"))))
+
+    def test_the_label_defaults_to_literal(self):
+        [v] = check({"rules": [{"secret": "x"}]}, [])
+        self.assertEqual((v.ok, v.what), (True, "secret <literal>"))
+
+    def test_a_secret_needs_a_non_empty_literal(self):
+        with self.assertRaisesRegex(BadRules, "secret takes a non-empty literal"):
+            check({"rules": [{"secret": ""}]}, [])
 
 
 def shim(**kw):
