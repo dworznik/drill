@@ -147,6 +147,12 @@ class Compare(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("one results file and two --model", err)
 
+    def test_a_model_not_in_the_file_is_refused(self):
+        f = self.write("a.json", results([row("greet", "haiku", 3, 3, ALL3)]))
+        code, _, err = run_cli("compare", str(f), "--model", "haiku", "--model", "opsu")
+        self.assertNotEqual(code, 0)
+        self.assertIn("no results for model opsu", err)
+
     def test_a_file_that_is_not_a_results_file_is_refused(self):
         a = self.write("a.json", {"manifest": {}})
         code, _, err = run_cli("compare", str(a), str(a))
