@@ -20,9 +20,18 @@ from drill.lib.trace_rules import env_keep_list
 SCAFFOLD = ".drill-scaffold.sh"
 JUDGE_MODEL = "haiku"  # plugin eval's default, passed explicitly so the manifest can name it
 
+# The scaffold's env is scrubbed (no proxy vars), and it runs outside the sandbox, so it reaches
+# the fake on the host's 127.0.0.1 with the URL baked in. No proxies: it talks to the fake itself.
+REGISTER = ("import json, sys, urllib.request as u; "
+            "u.build_opener(u.ProxyHandler({})).open(u.Request(sys.argv[1], method='POST', "
+            "data=json.dumps({'workspace': sys.argv[2]}).encode()), timeout=10)")
 
-def scaffold_text(case_dir: Path, keep: list[str]) -> str:
-    """drill's scaffold: seed `.drill/` in the run's workspace from absolute paths (ADR-0003)."""
+
+def scaffold_text(case_dir: Path, keep: list[str], fake: tuple[str, str] | None = None) -> str:
+    """drill's scaffold: seed `.drill/` in the run's workspace from absolute paths (ADR-0003).
+
+    With fake = (python, url), it then registers the workspace with the HTTP fake at url (ADR-0014).
+    """
     fixtures = case_dir.resolve() / "fixtures"
     lines = [
         "#!/bin/bash",
@@ -35,9 +44,11 @@ def scaffold_text(case_dir: Path, keep: list[str]) -> str:
     lines += [
         f'printf %s {shlex.quote(json.dumps(keep))} > "$PWD/.drill/env-keep.json"',
         ': > "$PWD/.drill/trace.jsonl"',
-        "",
     ]
-    return "\n".join(lines)
+    if fake:
+        python, url = fake
+        lines.append(f'{shlex.quote(python)} -I -c {shlex.quote(REGISTER)} {shlex.quote(url + "/_drill/run")} "$PWD"')
+    return "\n".join(lines) + "\n"
 
 
 def with_scaffold(case_yaml: str | None, name: str) -> str:
@@ -60,7 +71,7 @@ def with_scaffold(case_yaml: str | None, name: str) -> str:
     return case_yaml.rstrip("\n") + f"\ncontext:\n  {entry}\n"
 
 
-def prepare(skill: Path, cases: list[Case]) -> None:
+def prepare(skill: Path, cases: list[Case], fake: tuple[str, str] | None = None) -> None:
     """Empty the skill copy's evals/ and copy the rig's cases in, each with drill's scaffold."""
     evals = skill / "evals"
     shutil.rmtree(evals, ignore_errors=True)
@@ -68,7 +79,7 @@ def prepare(skill: Path, cases: list[Case]) -> None:
     for case in cases:
         dest = evals / case.name
         shutil.copytree(case.path, dest, symlinks=False)
-        (dest / SCAFFOLD).write_text(scaffold_text(dest, env_keep_list(case.rules)))
+        (dest / SCAFFOLD).write_text(scaffold_text(dest, env_keep_list(case.rules), fake))
         (dest / SCAFFOLD).chmod(0o755)
         yaml = dest / "case.yaml"
         yaml.write_text(with_scaffold(yaml.read_text() if yaml.is_file() else None, case.name))
@@ -101,20 +112,23 @@ class Model:
 
 
 def run(skill: Path, model: Model, bin_dir: Path, env_file: Path, tmp_dir: Path, out_dir: Path,
-        runs: int | None = None, claude: str = "claude") -> dict:
+        runs: int | None = None, claude: str = "claude", hosts=(), http_env: dict | None = None) -> dict:
     """Run every case `runs` times on one model; return plugin eval's aggregate result.
 
     plugin eval keeps each run's temp dir under TMPDIR, so tmp_dir must sit outside /tmp,
-    which its sandbox makes read-only.
+    which its sandbox makes read-only. Each of hosts is granted to the sandbox, and http_env
+    (the HTTP fake's proxy and CA variables) is exported to the run.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [claude, "plugin", "eval", str(skill), "--trust-plugin", "--scaffold", "--keep-temp",
-           "--no-publish", "--concurrency", "1", "--allow-tools", "Bash", "--model", model.id, "--judge-model", JUDGE_MODEL,
+           "--no-publish", "--concurrency", "1", "--model", model.id, "--judge-model", JUDGE_MODEL,
            "--output-dir", str(out_dir), "--report", str(out_dir / "report.html")]
     if runs is not None:
         cmd += ["--runs", str(runs)]
+    # last: --allow-tools takes every value up to the next flag
+    cmd += ["--allow-tools", "Bash", *(f"WebFetch(domain:{h})" for h in hosts)]
     env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}", CLAUDE_ENV_FILE=str(env_file),
-               TMPDIR=str(tmp_dir))
+               TMPDIR=str(tmp_dir), **(http_env or {}))
     try:
         proc = subprocess.run(cmd, env=env, stdin=subprocess.DEVNULL, text=True, capture_output=True)
     except OSError as e:
