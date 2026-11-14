@@ -42,12 +42,7 @@ class DrillRunRefusesABrokenRig(unittest.TestCase):
         self.assertIn("has no cases/ directory", err)
 
 
-class UnbuiltCommands(unittest.TestCase):
-    def test_table_is_not_built(self):
-        code, _, err = run_cli("table", "results.json")
-        self.assertNotEqual(code, 0)
-        self.assertIn("not built yet", err)
-
+class Verbs(unittest.TestCase):
     def test_every_call_needs_a_verb(self):
         code, _, _ = run_cli()
         self.assertNotEqual(code, 0)

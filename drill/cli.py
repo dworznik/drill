@@ -10,7 +10,8 @@ from drill import compare
 from drill.cases import load_cases
 from drill.drill import drill
 from drill.lib.http_fake import NoOpenSSL, require_openssl
-from drill.results import all_runs
+from drill.results import all_runs, load
+from drill.table import render
 from drill.rig import Refusal, load_rig
 from drill.runners.plugin_eval import Model
 from drill.skill import BadPin, SkillCache, drill_revision, local_skill, revision
@@ -72,19 +73,20 @@ def cmd_compare(args) -> int:
     if models or len(files) == 1:
         if len(files) != 1 or len(models) != 2:
             raise Refusal("to compare two models, give one results file and two --model")
-        print(compare.compare_models(compare.load(files[0]), models[0], models[1], files[0].name), end="")
+        print(compare.compare_models(load(files[0]), models[0], models[1], files[0].name), end="")
         return 0
     if not files:
         files = compare.newest_two(args.rig)
     elif len(files) != 2:
         raise Refusal("compare takes two results files, or none for the rig's two newest")
-    a, b = (compare.load(f) for f in files)
+    a, b = (load(f) for f in files)
     print(compare.compare_files(a, b, files[0].name, files[1].name), end="")
     return 0
 
 
 def cmd_table(args) -> int:
-    raise Refusal("table is not built yet")
+    print(render(load(args.results)), end="")
+    return 0
 
 
 def parser() -> argparse.ArgumentParser:
@@ -108,7 +110,7 @@ def parser() -> argparse.ArgumentParser:
                      help="with one results file, give two: compare the first model to the second")
     cmp.set_defaults(func=cmd_compare)
 
-    table = sub.add_parser("table", help="render the public summary of a results file (not built yet)")
+    table = sub.add_parser("table", help="render a results file's public per-model summary as markdown")
     table.add_argument("results", type=Path, metavar="results.json")
     table.set_defaults(func=cmd_table)
     return p
