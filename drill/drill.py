@@ -10,9 +10,9 @@ from pathlib import Path
 from drill.cases import Case
 from drill.lib.http_fake import HttpFake, install_node_passthrough, run_env, trust_bundle, upstream_proxy
 from drill.lib.shim import install_shims, shim_python
-from drill.results import case_hash, summarize
 from drill.lib.trace_rules import REDACTED, Verdict, check, load_trace, secrets
 from drill.lib.transcript import agent_writing
+from drill.results import case_hash, summarize
 from drill.rig import Rig
 from drill.skill import user_cache
 from drill.runners import plugin_eval

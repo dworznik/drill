@@ -18,8 +18,8 @@ from unittest import mock
 from drill.cases import load_cases
 from drill.cli import main
 from drill.drill import drill, run_root, run_status
-from drill.results import all_runs
 from drill.lib.trace_rules import Verdict
+from drill.results import all_runs
 from drill.rig import Refusal, load_rig
 from drill.lib.http_fake import HttpFake, install_node_passthrough, register, run_env
 from drill.lib.shim import shim_python
