@@ -18,6 +18,7 @@ from drill.cases import Case
 from drill.lib.trace_rules import env_keep_list
 
 SCAFFOLD = ".drill-scaffold.sh"
+JUDGE_MODEL = "haiku"  # plugin eval's default, passed explicitly so the manifest can name it
 
 # The scaffold's env is scrubbed (no proxy vars), and it runs outside the sandbox, so it reaches
 # the fake on the host's 127.0.0.1 with the URL baked in. No proxies: it talks to the fake itself.
@@ -120,7 +121,7 @@ def run(skill: Path, model: Model, bin_dir: Path, env_file: Path, tmp_dir: Path,
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [claude, "plugin", "eval", str(skill), "--trust-plugin", "--scaffold", "--keep-temp",
-           "--no-publish", "--concurrency", "1", "--model", model.id,
+           "--no-publish", "--concurrency", "1", "--model", model.id, "--judge-model", JUDGE_MODEL,
            "--output-dir", str(out_dir), "--report", str(out_dir / "report.html")]
     if runs is not None:
         cmd += ["--runs", str(runs)]
@@ -151,6 +152,7 @@ class RunRecord:
     transcript: Path | None
     trace: Path | None
     kept: Path | None
+    graders: dict  # grader name → passed
 
 
 def runs_of(aggregate: dict) -> list[RunRecord]:
@@ -165,7 +167,8 @@ def runs_of(aggregate: dict) -> list[RunRecord]:
                     case=name, arm=arm, index=i, score=float(r.get("score") or 0), error=r.get("error"),
                     transcript=tp if tp and tp.is_file() else None,
                     trace=(workspace(kept) / ".drill" / "trace.jsonl") if kept else None,
-                    kept=kept))
+                    kept=kept,
+                    graders={g["name"]: g.get("passed") for g in r.get("graders") or [] if "name" in g}))
     return records
 
 

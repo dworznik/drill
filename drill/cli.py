@@ -9,6 +9,7 @@ from pathlib import Path
 from drill.cases import load_cases
 from drill.drill import drill
 from drill.lib.http_fake import NoOpenSSL, require_openssl
+from drill.results import all_runs
 from drill.rig import Refusal, load_rig
 from drill.runners.plugin_eval import Model
 from drill.skill import BadPin, SkillCache, drill_revision, local_skill, revision
@@ -52,12 +53,15 @@ def cmd_run(args) -> int:
         revisions = {"skill": skill_rev, "drill": drill_revision(), "rig": rig_rev}
         path = drill(rig, cases, skill, revisions, models, runs=args.runs)
     results = json.loads(path.read_text())
-    for r in results["runs"]:
+    for r in all_runs(results):
         print(f"{r['status']:<5}  {r['case']}  {r['model']}  {r['arm']} #{r['run']}  score {r['score']:.2f}"
               + (f"  {r['error'][:120]}" if r["error"] else ""))
         for v in r["trace"]:
             if not v["ok"]:
                 print(f"         FAIL {v['rule']}  ({v['why']})")
+    for row in results["results"]:
+        rate = "—" if row["passRate"] is None else f"{row['c']}/{row['n']}"
+        print(f"{row['status']:<6} {row['case']}  {row['model']}  {rate}")
     print(f"drill: wrote {path}")
     return 0
 
