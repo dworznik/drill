@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# the skill, followed with curl (secret through stdin, results to $TMPDIR)
+set -eu; O=https://testnet.garden/api/v1/acme; export RLN_AGENT=1
+curl -sS "$O" >/dev/null
+rln params --network garden-sepolia --json >/dev/null
+printf '{"secret":"%s","recipient":"%s"}' "$SECRET" 0x1111111111111111111111111111111111111111 |
+  curl -sS -o "$TMPDIR/claim.json" -H 'content-type: application/json' --data @- "$O/claims"
+id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$TMPDIR/claim.json")
+msg=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["message"])' "$TMPDIR/claim.json")
+sig=$(printf '%s' "$msg" | rln account sign --account agent-1 --message-file - --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["signature"])')
+printf '{"signature":"%s"}' "$sig" | curl -sS -o /dev/null -H 'content-type: application/json' --data @- "$O/claims/$id/signature"
+for _ in 1 2 3 4 5; do
+  s=$(curl -sS "$O/claims/$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+  echo "poll: $s"; [[ $s == funded ]] && break
+done
+rln balance --account agent-1 --network garden-sepolia --json

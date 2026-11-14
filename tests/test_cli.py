@@ -1,8 +1,11 @@
 import io
+import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from drill.cli import main
 
@@ -61,6 +64,26 @@ class DrillRunRefusesABadPin(unittest.TestCase):
         code, _, err = run_cli("run", str(rig))
         self.assertNotEqual(code, 0)
         self.assertIn("not valid JSON", err)
+
+
+class DrillRunRefusesBadHosts(unittest.TestCase):
+    def rig(self, hosts):
+        rig = Path(tempfile.mkdtemp())
+        (rig / "cases" / "one").mkdir(parents=True)
+        (rig / "cases" / "one" / "prompt.md").write_text("hi\n")
+        (rig / "rig.json").write_text(json.dumps({"repo": "octo/skills", "sha": "a" * 40, "path": "s", "hosts": hosts}))
+        return rig
+
+    def test_a_url_is_not_a_host(self):
+        code, _, err = run_cli("run", str(self.rig(["https://api.example.com"])), "--model", "haiku")
+        self.assertNotEqual(code, 0)
+        self.assertIn("hosts must be a list of host names", err)
+
+    def test_a_rig_with_hosts_needs_openssl_before_anything_runs(self):
+        with mock.patch.dict(os.environ, {"PATH": str(Path(tempfile.mkdtemp()))}):
+            code, _, err = run_cli("run", str(self.rig(["api.example.com"])), "--model", "haiku")
+        self.assertNotEqual(code, 0)
+        self.assertIn("openssl", err)
 
 
 if __name__ == "__main__":

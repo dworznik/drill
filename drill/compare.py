@@ -70,6 +70,11 @@ def compare_files(a: dict, b: dict, a_name: str, b_name: str) -> str:
 
 
 def compare_models(doc: dict, first: str, second: str, name: str) -> str:
+    present = {r["model"] for r in doc["results"]}
+    missing = [m for m in (first, second) if m not in present]
+    if missing:
+        raise Refusal(f"{name} has no results for model {', '.join(missing)}; it has {', '.join(sorted(present)) or 'none'}")
+
     def rows(model):
         return {(r["case"], r["runner"]): r for r in doc["results"] if r["model"] == model}
     before, after = rows(first), rows(second)
